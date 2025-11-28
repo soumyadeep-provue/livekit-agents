@@ -1,0 +1,30 @@
+{
+  "name": "@studio/agent",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit",
+    "dev": "tsx src/agent.ts dev",
+    "download-files": "pnpm run build && node dist/agent.js download-files",
+    "start": "node dist/agent.js start"
+  },
+  "dependencies": {
+    "@livekit/agents": "^1.0.21",
+    "@livekit/agents-plugin-livekit": "^1.0.21",
+    "@livekit/agents-plugin-openai": "^1.0.21",
+    "@livekit/agents-plugin-silero": "^1.0.21",
+    "@livekit/noise-cancellation-node": "^0.1.9",
+    "@studio/shared": "workspace:*",
+    "dotenv": "^17.2.3",
+    "livekit-server-sdk": "^2.13.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.11",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}

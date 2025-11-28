@@ -1,0 +1,27 @@
+{
+  "name": "@studio/web",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@livekit/components-react": "^2.9.16",
+    "@livekit/components-styles": "^1.2.0",
+    "@studio/shared": "workspace:*",
+    "livekit-client": "^2.13.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.6",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^4.4.1",
+    "typescript": "^5.9.3",
+    "vite": "^6.3.5"
+  }
+}

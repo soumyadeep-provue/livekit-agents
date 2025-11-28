@@ -1,0 +1,51 @@
+{
+  "name": "studio-voice-platform",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "pnpm -r build",
+    "build:shared": "pnpm --filter @studio/shared build",
+    "build:agent": "pnpm --filter @studio/agent build",
+    "build:api": "pnpm --filter @studio/api build",
+    "build:web": "pnpm --filter @studio/web build",
+    "clean": "pnpm -r clean",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "eslint \"**/*.{ts,tsx,js}\"",
+    "lint:fix": "eslint --fix \"**/*.{ts,tsx,js}\"",
+    "format": "prettier --write \"**/*.{ts,tsx,js,json,md,css}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,json,md,css}\"",
+    "dev": "pnpm run dev:all",
+    "dev:all": "concurrently \"pnpm:dev:api\" \"pnpm:dev:web\" \"pnpm:dev:agent\"",
+    "dev:agent": "pnpm --filter @studio/agent dev",
+    "dev:api": "pnpm --filter @studio/api dev",
+    "dev:web": "pnpm --filter @studio/web dev",
+    "download-files": "pnpm --filter @studio/agent download-files",
+    "start:agent": "pnpm --filter @studio/agent start",
+    "start:api": "pnpm --filter @studio/api start"
+  },
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=10.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.38.0",
+    "@trivago/prettier-plugin-sort-imports": "^5.2.2",
+    "@types/node": "^22.18.11",
+    "@types/xml2js": "^0.4.14",
+    "concurrently": "^9.1.2",
+    "eslint": "^9.38.0",
+    "globals": "^16.4.0",
+    "jiti": "^2.6.1",
+    "prettier": "^3.5.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.46.2"
+  },
+  "dependencies": {
+    "@livekit/agents": "1.0.21",
+    "@livekit/agents-plugin-livekit": "1.0.21",
+    "@livekit/agents-plugin-openai": "^1.0.21",
+    "@livekit/agents-plugin-silero": "1.0.21"
+  }
+}
