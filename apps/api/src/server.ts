@@ -669,8 +669,8 @@ app.get('/api/agents/:id/telephony', authenticate, async (req: Request, res: Res
   };
 
   // Include SIP URI for configuration (safe to expose)
-  const sipUri = `sip:agent_${telephonyConfig.agentConfigId.slice(0, 8)}@${telephonyConfig.sipDomain}`;
-  
+  const sipUri = `sip:${telephonyConfig.sipDomain}`;
+
   res.json({
     ...response,
     sipUri, // Include SIP URI for Exotel configuration
@@ -791,22 +791,23 @@ app.post(
         phoneNumber,
         exophoneSid: exophoneSid,
         inboundTrunkId: sipResult.trunkId,
-        sipDomain: sipResult.sipUri.split('@')[1], // Extract domain from SIP URI
+        sipDomain: sipResult.sipDomain,
         dispatchRuleId: sipResult.dispatchRuleId,
       });
 
       // 4. Log Exotel configuration instructions
       console.log(`
-📧 IMPORTANT: Configure Exotel vSIP Settings:
+📧 IMPORTANT: Contact Exotel Support to Configure:
    ========================================
    Phone Number: ${phoneNumber}
+   LiveKit SIP Domain: ${sipResult.sipDomain}
+   Full SIP URI: ${sipResult.sipUri}
 
-   Configure in Exotel Dashboard:
-   SIP URI: ${sipResult.sipUri}
-   Username: ${sipResult.sipUsername}
-   Password: ${sipResult.sipPassword}
-
-   Set this in Exotel's "Connect to SIP" settings for the Exophone.
+   NEXT STEPS:
+   1. Contact Exotel Support
+   2. Provide them with this SIP domain: ${sipResult.sipDomain}
+   3. Request them to map your phone number to this domain
+   4. Authentication is IP-based (no credentials needed)
    ========================================
       `.trim());
 
@@ -824,10 +825,9 @@ app.post(
         ...response,
         sipConfig: {
           sipUri: sipResult.sipUri,
-          sipUsername: sipResult.sipUsername,
-          sipPassword: sipResult.sipPassword,
+          sipDomain: sipResult.sipDomain,
         },
-        message: `Phone number ${phoneNumber} provisioned. Configure Exotel vSIP settings with the provided SIP credentials.`,
+        message: `Phone number ${phoneNumber} provisioned. Contact Exotel Support to map this number to SIP domain: ${sipResult.sipDomain}`,
       });
     } catch (error) {
       console.error('Failed to setup telephony:', error);
@@ -919,15 +919,14 @@ app.post('/api/agents/:id/telephony/fix-dispatch', authenticate, async (req: Req
     await db.updateTelephonyConfig(telephonyConfig.id, {
       inboundTrunkId: result.trunkId,
       dispatchRuleId: result.dispatchRuleId,
-      sipDomain: result.sipUri.split('@')[1],
+      sipDomain: result.sipDomain,
     });
 
     res.json({
       message: 'Dispatch rule recreated with agent name successfully',
       dispatchRuleId: result.dispatchRuleId,
       sipUri: result.sipUri,
-      sipUsername: result.sipUsername,
-      sipPassword: result.sipPassword,
+      sipDomain: result.sipDomain,
     });
   } catch (error) {
     console.error('Failed to fix dispatch rule:', error);

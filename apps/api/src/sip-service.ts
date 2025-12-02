@@ -18,8 +18,7 @@ export interface SetupTelephonyResult {
   trunkId: string;
   dispatchRuleId: string;
   sipUri: string;
-  sipUsername: string;
-  sipPassword: string;
+  sipDomain: string;
 }
 
 /**
@@ -42,13 +41,16 @@ export async function setupTelephonyForAgent(
   console.log(`[SIP] Setting up telephony for agent ${agentConfigId}`);
   console.log(`[SIP] Phone number: ${phoneNumber}`);
 
-  // Use Exotel API credentials for SIP authentication
-  // Exotel uses API key as username and API token as password
-  const sipUsername = process.env.EXOTEL_API_KEY!;
-  const sipPassword = process.env.EXOTEL_API_TOKEN!;
+  // Exotel uses IP-based authentication, not username/password
+  // Get Exotel's SIP server IP addresses for whitelisting
+  // These IPs should be provided by Exotel support
+  const exotelSipIPs = (process.env.EXOTEL_SIP_IPS || '').split(',').filter(ip => ip.trim());
 
-  if (!sipUsername || !sipPassword) {
-    throw new Error('Missing Exotel credentials: EXOTEL_API_KEY and EXOTEL_API_TOKEN are required');
+  if (exotelSipIPs.length === 0) {
+    console.warn('[SIP] Warning: No Exotel SIP IPs configured. Trunk will accept calls from any IP.');
+    console.warn('[SIP] Set EXOTEL_SIP_IPS environment variable with comma-separated IPs for security.');
+  } else {
+    console.log('[SIP] Whitelisting Exotel IPs:', exotelSipIPs);
   }
 
   try {
@@ -56,21 +58,27 @@ export async function setupTelephonyForAgent(
     console.log('[SIP] Creating inbound trunk...');
     const trunkName = `trunk-${agentConfigId.slice(0, 8)}`;
 
-    // Exotel uses API key/token for SIP authentication (configured above)
-    // No IP whitelisting needed - Exotel will authenticate using the credentials
+    // Exotel uses IP-based authentication
+    // Configure trunk to accept calls from Exotel's IP addresses
+    const trunkOptions: any = {
+      metadata: JSON.stringify({
+        agentConfigId,
+        phoneNumber,
+        createdAt: new Date().toISOString(),
+        provider: 'exotel',
+      }),
+    };
+
+    // Add IP whitelisting if Exotel IPs are configured
+    if (exotelSipIPs.length > 0) {
+      trunkOptions.allowedAddresses = exotelSipIPs;
+    }
+    // Otherwise, trunk will accept from any IP (less secure but works for testing)
+
     const trunkInfo = await sipClient.createSipInboundTrunk(
       trunkName,
       [phoneNumber],
-      {
-        authUsername: sipUsername,
-        authPassword: sipPassword,
-        metadata: JSON.stringify({
-          agentConfigId,
-          phoneNumber,
-          createdAt: new Date().toISOString(),
-          provider: 'exotel',
-        }),
-      }
+      trunkOptions
     );
 
     // The SDK returns SIPInboundTrunkInfo with sipTrunkId field
@@ -127,12 +135,15 @@ export async function setupTelephonyForAgent(
       console.log(`[SIP] Constructed SIP domain from LIVEKIT_URL: ${sipDomain}`);
     }
 
-    const sipUri = `sip:${sipUsername}@${sipDomain}`;
+    // For Exotel, the SIP URI is just the domain (no username)
+    // Exotel support will map your phone number to this domain
+    const sipUri = `sip:${sipDomain}`;
 
     console.log('[SIP] Configuration complete:');
-    console.log(`[SIP]   SIP URI: ${sipUri}`);
-    console.log(`[SIP]   Username (Exotel API Key): ${sipUsername}`);
-    console.log(`[SIP]   Password (Exotel API Token): ${sipPassword.substring(0, 4)}****`);
+    console.log(`[SIP]   SIP Domain: ${sipDomain}`);
+    console.log(`[SIP]   SIP URI (for Exotel): ${sipUri}`);
+    console.log(`[SIP]   Phone Number: ${phoneNumber}`);
+    console.log(`[SIP]   Authentication: IP-based (${exotelSipIPs.length > 0 ? exotelSipIPs.join(', ') : 'any IP'})`);
 
     // Store the SIP domain as platform config (same for all agents in the project)
     // Note: Trunk ID is stored per-agent in telephony_configs table, not as platform config
@@ -142,8 +153,7 @@ export async function setupTelephonyForAgent(
       trunkId,
       dispatchRuleId,
       sipUri,
-      sipUsername,
-      sipPassword,
+      sipDomain,
     };
   } catch (error) {
     console.error('[SIP] Failed to setup telephony:', error);

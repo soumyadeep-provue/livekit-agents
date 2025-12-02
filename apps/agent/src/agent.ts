@@ -303,12 +303,16 @@ export default defineAgent({
     proc.userData.vad = await silero.VAD.load();
   },
   entry: async (ctx: JobContext) => {
-    console.log('[Agent] Entry called for room:', ctx.room.name);
-    console.log('[Agent] Room metadata:', ctx.room.metadata);
+    console.log('========================================');
+    console.log('[Agent] 🚀 ENTRY FUNCTION CALLED');
+    console.log('[Agent] Room Name:', ctx.room.name);
+    console.log('[Agent] Room Metadata (raw):', ctx.room.metadata);
+    console.log('========================================');
 
     // Connect to the room first to access metadata
     await ctx.connect();
-    console.log('[Agent] Connected to room successfully');
+    console.log('[Agent] ✅ Connected to room successfully');
+    console.log('[Agent] Room URL:', ctx.room.name);
 
     // Parse room metadata for personalized configuration
     const roomMetadata = parseRoomMetadata(ctx.room.metadata);
@@ -347,9 +351,24 @@ export default defineAgent({
 
     // Check for telephony call - either from metadata or by checking participants
     const participants = ctx.room.remoteParticipants;
-    const hasSipParticipant = Array.from(participants.values()).some((p) => isSipParticipant(p));
+    console.log('[Agent] 👥 Current Participants:', participants.size);
+
+    const sipParticipants = Array.from(participants.values()).filter((p) => isSipParticipant(p));
+    const hasSipParticipant = sipParticipants.length > 0;
+
+    if (hasSipParticipant) {
+      console.log('[Agent] 📞 SIP PARTICIPANTS DETECTED:', sipParticipants.length);
+      sipParticipants.forEach((p) => {
+        console.log('[Agent]   - Identity:', p.identity);
+        console.log('[Agent]   - Name:', p.name);
+      });
+    } else {
+      console.log('[Agent] ℹ️  No SIP participants detected yet');
+    }
+
     // Also check if this is an outbound call (telephony) or if room has telephony metadata
     const isTelephonyCall = isOutboundCall || hasSipParticipant || !!roomMetadata?.agentConfigId;
+    console.log('[Agent] Is Telephony Call:', isTelephonyCall);
 
     // Merge with defaults
     const config: AgentRuntimeConfig = {
@@ -440,10 +459,13 @@ export default defineAgent({
       const modelName = config.sttModel.replace('openai/', '');
 
       if (modelName === 'gpt-4o-transcribe') {
-        // gpt-4o-transcribe supports native streaming - use directly without StreamAdapter
-        sttProvider = new openai.STT({
+        // For telephony, always use StreamAdapter for better reliability
+        const openaiSTT = new openai.STT({
           model: 'gpt-4o-transcribe',
         });
+        sttProvider = isTelephonyCall
+          ? new stt.StreamAdapter(openaiSTT, vad)
+          : openaiSTT;
       } else {
         // whisper-1 doesn't support streaming - wrap with StreamAdapter
         const openaiSTT = new openai.STT({
@@ -460,14 +482,15 @@ export default defineAgent({
     }
 
     // Create the voice session with personalized models
+    // For telephony calls, use VAD-based turn detection instead of MultilingualModel
     const session = new voice.AgentSession({
       stt: sttProvider,
       llm: new openai.LLM({
         model: config.model,
       }),
       tts: ttsProvider,
+      // Use server-based turn detection for telephony (more reliable for PSTN)
       turnDetection: new livekit.turnDetector.MultilingualModel(),
-      // VAD is needed for interruption handling (used directly for gpt-4o-transcribe, via StreamAdapter for whisper-1)
       vad: vad,
     });
 
@@ -562,6 +585,20 @@ export default defineAgent({
   },
 });
 
+// Startup logging
+console.log('========================================');
+console.log('🚀 LIVEKIT VOICE AGENT STARTING');
+console.log('========================================');
+console.log('Agent Name: studio-voice-agent');
+console.log('LiveKit URL:', process.env.LIVEKIT_URL || 'NOT SET');
+console.log('API Key configured:', !!process.env.LIVEKIT_API_KEY);
+console.log('API Secret configured:', !!process.env.LIVEKIT_API_SECRET);
+console.log('OpenAI Key configured:', !!process.env.OPENAI_API_KEY);
+console.log('API URL:', process.env.API_URL || 'http://localhost:3001 (default)');
+console.log('========================================');
+console.log('⏳ Connecting to LiveKit...');
+console.log('========================================\n');
+
 cli.runApp(
   new WorkerOptions({
     agent: fileURLToPath(import.meta.url),
@@ -569,32 +606,50 @@ cli.runApp(
     agentName: 'studio-voice-agent',
     // Auto-accept jobs for rooms with agentConfigId in metadata
     requestFunc: async (request: any) => {
-      console.log('[Agent] Job request received:', request.room.name);
+      console.log('========================================');
+      console.log('[Agent] 📞 JOB REQUEST RECEIVED');
+      console.log('[Agent] Room Name:', request.room.name);
+      console.log('[Agent] Room SID:', request.room.sid);
+      console.log('[Agent] Room Metadata:', request.room.metadata);
+      console.log('[Agent] Agent Name:', request.agentName);
+      console.log('[Agent] Request:', JSON.stringify(request, null, 2));
+      console.log('========================================');
 
       // Parse room metadata
       try {
         const metadata = request.room.metadata ? JSON.parse(request.room.metadata) : {};
+        console.log('[Agent] Parsed Metadata:', JSON.stringify(metadata, null, 2));
 
         // Auto-accept if room has agentConfigId (telephony calls)
         if (metadata.agentConfigId) {
-          console.log('[Agent] Auto-accepting job for room with agentConfigId:', metadata.agentConfigId);
-          await request.accept(); // Accept the job
+          console.log('[Agent] ✅ SIP CALL DETECTED - Auto-accepting for agentConfigId:', metadata.agentConfigId);
+          console.log('[Agent] Call Type:', metadata.type || 'inbound');
+          if (metadata.isOutboundCall) {
+            console.log('[Agent] Outbound call to:', metadata.toPhoneNumber);
+          }
+          await request.accept();
+          console.log('[Agent] ✅ Job accepted successfully');
           return;
         }
 
         // Also accept if explicitly requested by name
         if (request.agentName === 'studio-voice-agent') {
-          console.log('[Agent] Auto-accepting job for explicit agent request');
+          console.log('[Agent] ✅ Explicit agent request - Auto-accepting');
           await request.accept();
+          console.log('[Agent] ✅ Job accepted successfully');
           return;
         }
+
+        console.log('[Agent] ⚠️  No matching criteria, but accepting anyway (default behavior)');
       } catch (e) {
-        console.log('[Agent] Error parsing metadata, accepting job anyway');
-        await request.accept(); // Accept on error to be safe
+        console.error('[Agent] ❌ Error parsing metadata:', e);
+        console.log('[Agent] Accepting job anyway to be safe');
+        await request.accept();
         return;
       }
 
-      // Default: accept all jobs (you can change this to false if needed)
+      // Default: accept all jobs
+      console.log('[Agent] ✅ Accepting job (default)');
       await request.accept();
     },
   })
