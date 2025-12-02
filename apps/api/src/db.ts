@@ -42,6 +42,7 @@ function dbTelephonyToTelephonyConfig(row: DbTelephonyConfig): TelephonyConfig {
     phoneNumber: row.phone_number,
     exophoneSid: row.exophone_sid,
     inboundTrunkId: row.inbound_trunk_id,
+    outboundTrunkId: row.outbound_trunk_id,
     sipDomain: row.sip_domain,
     dispatchRuleId: row.dispatch_rule_id ?? undefined,
     isActive: row.is_active,
@@ -216,6 +217,7 @@ export const db = {
       phoneNumber: string;
       exophoneSid: string;
       inboundTrunkId: string;
+      outboundTrunkId: string;
       sipDomain: string;
       dispatchRuleId?: string;
     }
@@ -227,6 +229,7 @@ export const db = {
         phone_number: data.phoneNumber,
         exophone_sid: data.exophoneSid,
         inbound_trunk_id: data.inboundTrunkId,
+        outbound_trunk_id: data.outboundTrunkId,
         sip_domain: data.sipDomain,
         dispatch_rule_id: data.dispatchRuleId || null,
         is_active: false,
@@ -280,6 +283,7 @@ export const db = {
     if (data.dispatchRuleId !== undefined) updateData.dispatch_rule_id = data.dispatchRuleId;
     if (data.isActive !== undefined) updateData.is_active = data.isActive;
     if (data.inboundTrunkId !== undefined) updateData.inbound_trunk_id = data.inboundTrunkId;
+    if (data.outboundTrunkId !== undefined) updateData.outbound_trunk_id = data.outboundTrunkId;
     if (data.sipDomain !== undefined) updateData.sip_domain = data.sipDomain;
 
     const { data: row, error } = await supabase

@@ -921,7 +921,8 @@ app.post(
       const telephonyConfig = await db.createTelephonyConfig(req.params.id, {
         phoneNumber,
         exophoneSid: exophoneSid,
-        inboundTrunkId: sipResult.trunkId,
+        inboundTrunkId: sipResult.inboundTrunkId,
+        outboundTrunkId: sipResult.outboundTrunkId,
         sipDomain: sipResult.sipDomain,
         dispatchRuleId: sipResult.dispatchRuleId,
       });
@@ -1107,7 +1108,8 @@ app.post('/api/agents/:id/telephony/fix-dispatch', authenticate, async (req: Req
 
     // Update database with new trunk and dispatch rule
     await db.updateTelephonyConfig(telephonyConfig.id, {
-      inboundTrunkId: result.trunkId,
+      inboundTrunkId: result.inboundTrunkId,
+      outboundTrunkId: result.outboundTrunkId,
       dispatchRuleId: result.dispatchRuleId,
       sipDomain: result.sipDomain,
     });

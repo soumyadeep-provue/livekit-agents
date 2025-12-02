@@ -1,4 +1,5 @@
 import { SipClient, RoomServiceClient, RoomAgentDispatch } from 'livekit-server-sdk';
+import { SIPTransport } from '@livekit/protocol';
 import type { TelephonyConfig } from '@studio/shared';
 import { db } from './db.js';
 
@@ -15,7 +16,8 @@ function getRoomClient(): RoomServiceClient {
 }
 
 export interface SetupTelephonyResult {
-  trunkId: string;
+  inboundTrunkId: string;
+  outboundTrunkId: string;
   dispatchRuleId: string;
   sipUri: string;
   sipDomain: string;
@@ -56,7 +58,7 @@ export async function setupTelephonyForAgent(
   try {
     // Step 1: Create an inbound trunk for this specific agent
     console.log('[SIP] Creating inbound trunk...');
-    const trunkName = `trunk-${agentConfigId.slice(0, 8)}`;
+    const inboundTrunkName = `trunk-in-${agentConfigId.slice(0, 8)}`;
 
     // Exotel uses IP-based authentication
     // Configure trunk to accept calls from Exotel's IP addresses
@@ -66,6 +68,7 @@ export async function setupTelephonyForAgent(
         phoneNumber,
         createdAt: new Date().toISOString(),
         provider: 'exotel',
+        direction: 'inbound',
       }),
     };
 
@@ -75,17 +78,53 @@ export async function setupTelephonyForAgent(
     }
     // Otherwise, trunk will accept from any IP (less secure but works for testing)
 
-    const trunkInfo = await sipClient.createSipInboundTrunk(
-      trunkName,
+    const inboundTrunkInfo = await sipClient.createSipInboundTrunk(
+      inboundTrunkName,
       [phoneNumber],
       trunkOptions
     );
 
     // The SDK returns SIPInboundTrunkInfo with sipTrunkId field
-    const trunkId = trunkInfo.sipTrunkId;
-    console.log(`[SIP] Trunk created: ${trunkId}`);
+    const inboundTrunkId = inboundTrunkInfo.sipTrunkId;
+    console.log(`[SIP] Inbound trunk created: ${inboundTrunkId}`);
 
-    // Step 2: Create dispatch rule for routing calls
+    // Step 1.5: Create an outbound trunk for making calls
+    console.log('[SIP] Creating outbound trunk...');
+    const outboundTrunkName = `trunk-out-${agentConfigId.slice(0, 8)}`;
+
+    // Use Exotel's SIP server for outbound (from pcap analysis)
+    const EXOTEL_OUTBOUND_SIP = process.env.EXOTEL_OUTBOUND_SIP || '143.223.91.185:5060';
+    const EXOTEL_SIP_USERNAME = process.env.EXOTEL_SIP_USERNAME;
+    const EXOTEL_SIP_PASSWORD = process.env.EXOTEL_SIP_PASSWORD;
+
+    // For Exotel, remove +91 prefix (use 2247790694 format, not 02247790694 or +912247790694)
+    const exotelNumber = phoneNumber.replace(/^\+91/, '').replace(/^0/, '');
+    console.log(`[SIP] Using Exotel outbound SIP address: ${EXOTEL_OUTBOUND_SIP}`);
+    console.log(`[SIP] Phone number for Exotel: ${exotelNumber} (without +91 or 0 prefix)`);
+    console.log(`[SIP] SIP Auth: ${EXOTEL_SIP_USERNAME ? 'Username configured' : 'No username (IP-based auth)'}`);
+
+    const outboundTrunkInfo = await sipClient.createSipOutboundTrunk(
+      outboundTrunkName,
+      EXOTEL_OUTBOUND_SIP,  // Exotel's SIP server
+      [exotelNumber],  // From number in Exotel format (without +91 or 0)
+      {
+        transport: SIPTransport.SIP_TRANSPORT_AUTO,
+        authUsername: EXOTEL_SIP_USERNAME,
+        authPassword: EXOTEL_SIP_PASSWORD,
+        metadata: JSON.stringify({
+          agentConfigId,
+          phoneNumber,
+          createdAt: new Date().toISOString(),
+          provider: 'exotel',
+          direction: 'outbound',
+        }),
+      }
+    );
+
+    const outboundTrunkId = outboundTrunkInfo.sipTrunkId;
+    console.log(`[SIP] Outbound trunk created: ${outboundTrunkId}`);
+
+    // Step 2: Create dispatch rule for routing inbound calls
     console.log('[SIP] Creating dispatch rule...');
 
     // Agent name used for telephony dispatch
@@ -99,7 +138,7 @@ export async function setupTelephonyForAgent(
       },
       {
         name: `dispatch-${agentConfigId.slice(0, 8)}`,
-        trunkIds: [trunkId],
+        trunkIds: [inboundTrunkId],
         hidePhoneNumber: false,
         metadata: JSON.stringify({
           agentConfigId,
@@ -156,7 +195,8 @@ export async function setupTelephonyForAgent(
     await db.setPlatformConfig('LIVEKIT_EXOTEL_FQDN', sipDomain);
 
     return {
-      trunkId,
+      inboundTrunkId,
+      outboundTrunkId,
       dispatchRuleId,
       sipUri,
       sipDomain,
@@ -224,13 +264,23 @@ export async function teardownTelephony(config: TelephonyConfig): Promise<void> 
     }
   }
 
-  // Delete the trunk (each agent has their own now)
+  // Delete inbound trunk
   if (config.inboundTrunkId) {
     try {
       await sipClient.deleteSipTrunk(config.inboundTrunkId);
-      console.log(`[SIP] Deleted trunk: ${config.inboundTrunkId}`);
+      console.log(`[SIP] Deleted inbound trunk: ${config.inboundTrunkId}`);
     } catch (e) {
-      console.error('[SIP] Failed to delete trunk:', e);
+      console.error('[SIP] Failed to delete inbound trunk:', e);
+    }
+  }
+
+  // Delete outbound trunk
+  if (config.outboundTrunkId) {
+    try {
+      await sipClient.deleteSipTrunk(config.outboundTrunkId);
+      console.log(`[SIP] Deleted outbound trunk: ${config.outboundTrunkId}`);
+    } catch (e) {
+      console.error('[SIP] Failed to delete outbound trunk:', e);
     }
   }
 }
@@ -241,7 +291,7 @@ export async function teardownTelephony(config: TelephonyConfig): Promise<void> 
  *
  * This function:
  * 1. Creates a LiveKit room for the call
- * 2. Uses Exotel's API to dial the customer
+ * 2. Uses Exotel's Call API to dial the customer
  * 3. Connects the call to the LiveKit room via SIP
  * 4. The agent will join the room and talk to the customer
  *
@@ -259,69 +309,80 @@ export async function placeOutboundCall(
     throw new Error('Agent does not have telephony enabled');
   }
 
-  // For outbound calls, we'll use the SIP Participant API instead of Exotel
-  // This is the proper way to handle outbound calls with LiveKit
+  // Get Exotel credentials
+  const EXOTEL_ACCOUNT_SID = process.env.EXOTEL_ACCOUNT_SID || process.env.EXOTEL_API_KEY;
+  const EXOTEL_API_KEY = process.env.EXOTEL_API_KEY;
+  const EXOTEL_API_TOKEN = process.env.EXOTEL_API_TOKEN;
+  const EXOTEL_SUBDOMAIN = process.env.EXOTEL_SUBDOMAIN;
+  const EXOTEL_APP_ID = process.env.EXOTEL_APP_ID || '33560';
 
-  const sipClient = getSipClient();
-  const roomClient = getRoomClient();
+  if (!EXOTEL_API_KEY || !EXOTEL_API_TOKEN || !EXOTEL_SUBDOMAIN) {
+    throw new Error('Missing Exotel credentials. Set EXOTEL_API_KEY, EXOTEL_API_TOKEN, and EXOTEL_SUBDOMAIN');
+  }
 
-  // Generate unique room name for this call
-  const roomName = `call-out-${agentConfigId.slice(0, 8)}-${Date.now()}`;
-
-  // Create room with agent dispatch
-  console.log(`[SIP] Creating room for outbound call: ${roomName}`);
-  await roomClient.createRoom({
-    name: roomName,
-    emptyTimeout: 300, // 5 minutes
-    maxParticipants: 10,
-    metadata: JSON.stringify({
-      agentConfigId,
-      type: 'outbound',
-      isOutboundCall: true,
-      toPhoneNumber
-    }),
-  });
-
-  console.log(`[SIP] Room created: ${roomName}`);
-
-  // Create SIP participant in the room
-  // This initiates the outbound call
   try {
-    console.log(`[SIP] Creating SIP participant for outbound call`);
-    console.log(`[SIP]   From: ${telephonyConfig.phoneNumber}`);
-    console.log(`[SIP]   To: ${toPhoneNumber}`);
-    console.log(`[SIP]   Trunk: ${telephonyConfig.inboundTrunkId}`);
+    console.log(`[Exotel] Placing outbound call via Exotel Call API`);
+    console.log(`[Exotel]   From: ${telephonyConfig.phoneNumber}`);
+    console.log(`[Exotel]   To: ${toPhoneNumber}`);
+    console.log(`[Exotel]   App ID (Flow): ${EXOTEL_APP_ID}`);
+    console.log(`[Exotel]   Account SID: ${EXOTEL_ACCOUNT_SID}`);
+    console.log(`[Exotel]   Note: Flow will connect to LiveKit inbound trunk`);
+    console.log(`[Exotel]   Dispatch rule will create room and agent will auto-join`);
 
-    // Use the agent's trunk for outbound calls
-    // The createSipParticipant method signature: (trunkId, toNumber, roomName, options?)
-    await sipClient.createSipParticipant(
-      telephonyConfig.inboundTrunkId,
-      toPhoneNumber,
-      roomName,
-      {
-        participantIdentity: `sip-${Date.now()}`,
-        participantName: `Outbound Call to ${toPhoneNumber}`,
-        participantMetadata: JSON.stringify({
-          type: 'outbound',
-          agentConfigId,
-          fromNumber: telephonyConfig.phoneNumber,
-        }),
-        dtmf: '',
-        playDialtone: true,
-        hidePhoneNumber: false,
-      }
-    );
+    // Use Exotel's Call API with the configured flow
+    // The flow connects to LiveKit inbound trunk, dispatch rule creates room
+    const exotelUrl = `https://${EXOTEL_SUBDOMAIN}.exotel.com/v1/Accounts/${EXOTEL_ACCOUNT_SID}/Calls/connect.json`;
 
-    console.log(`[SIP] Outbound call initiated successfully`);
+    // Create Basic Auth header
+    const credentials = Buffer.from(`${EXOTEL_API_KEY}:${EXOTEL_API_TOKEN}`).toString('base64');
+    const authHeader = `Basic ${credentials}`;
+
+    // Format numbers for Exotel (remove +91 for Indian numbers)
+    const exotelFromNumber = telephonyConfig.phoneNumber.replace(/^\+91/, '');
+    const exotelToNumber = toPhoneNumber.replace(/^\+91/, '');
+
+    const formData = new URLSearchParams({
+      From: exotelFromNumber,    // Our Exotel number
+      To: exotelToNumber,        // Customer's number
+      CallerId: exotelFromNumber, // Caller ID
+      CallType: 'trans',         // Transactional call
+      AppId: EXOTEL_APP_ID,      // Flow that connects to LiveKit SIP trunk
+    });
+
+    console.log(`[Exotel] Request parameters:`);
+    console.log(`[Exotel]   From: ${exotelFromNumber}`);
+    console.log(`[Exotel]   To: ${exotelToNumber}`);
+    console.log(`[Exotel]   CallerId: ${exotelFromNumber}`);
+    console.log(`[Exotel]   AppId: ${EXOTEL_APP_ID}`);
+
+    const response = await fetch(exotelUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': authHeader,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: formData.toString(),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`[Exotel] API error (${response.status}):`, errorText);
+      throw new Error(`Exotel API error: ${response.status} ${errorText}`);
+    }
+
+    const result = await response.json();
+    console.log(`[Exotel] Call initiated:`, JSON.stringify(result, null, 2));
+
+    // Room will be created by dispatch rule when call connects
+    // Room name follows pattern: call-{agentIdPrefix}-{uniqueId}
+    const roomName = `call-${agentConfigId.slice(0, 8)}-${result.Call?.Sid || Date.now()}`;
 
     return {
       roomName,
-      callSid: `call-${Date.now()}`, // Generate a call ID for tracking
+      callSid: result.Call?.Sid || `call-${Date.now()}`,
     };
   } catch (error) {
-    console.error('[SIP] Failed to create SIP participant:', error);
-    // Clean up room if call fails
-    await roomClient.deleteRoom(roomName);
+    console.error('[Exotel] Failed to place outbound call:', error);
     throw error;
   }
 }

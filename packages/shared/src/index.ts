@@ -98,6 +98,7 @@ export const TelephonyConfigSchema = z.object({
   exophoneSid: z.string(), // Exotel's ID for the virtual number
   // LiveKit - individual trunk per agent
   inboundTrunkId: z.string(), // LiveKit inbound trunk ID (unique per agent)
+  outboundTrunkId: z.string(), // LiveKit outbound trunk ID (unique per agent)
   sipDomain: z.string(), // SIP domain (e.g., project.sip.livekit.cloud)
   dispatchRuleId: z.string().optional(), // LiveKit dispatch rule ID
   // Status

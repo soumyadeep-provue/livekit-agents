@@ -100,6 +100,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@livekit/protocol':
+        specifier: ^1.43.2
+        version: 1.43.2
       '@studio/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -924,6 +927,9 @@ packages:
 
   '@livekit/protocol@1.43.1':
     resolution: {integrity: sha512-0NiinrCw9PruS9rFqr/F4UhLn0t09DDjSRgMnU3uu2iHT7uW4wgXPBlTp9HZ/nSShsSd0YCcG2HLX3ltwgkVcw==}
+
+  '@livekit/protocol@1.43.2':
+    resolution: {integrity: sha512-QHBPAfdfjvTKYnr1IMtFdXpmCamLzLY2GrZSM6I/ajVKG1jMHx14wXDQES+3JQ3+dgXJB/4xcRVO+DJ9fnmEEg==}
 
   '@livekit/rtc-node-darwin-arm64@0.13.21':
     resolution: {integrity: sha512-ECR7KyVeFmb6XOaRK7wE/O3MWv7Wk99oDJbiZDHBR6VFPWSYBPyfZYNUp+2HVugd12iderdWn3aQ/b3us//MTQ==}
@@ -3438,6 +3444,10 @@ snapshots:
     dependencies:
       '@bufbuild/protobuf': 1.10.1
 
+  '@livekit/protocol@1.43.2':
+    dependencies:
+      '@bufbuild/protobuf': 1.10.1
+
   '@livekit/rtc-node-darwin-arm64@0.13.21':
     optional: true
 
@@ -4634,7 +4644,7 @@ snapshots:
   livekit-server-sdk@2.14.2:
     dependencies:
       '@bufbuild/protobuf': 1.10.1
-      '@livekit/protocol': 1.43.1
+      '@livekit/protocol': 1.43.2
       camelcase-keys: 9.1.3
       jose: 5.10.0
 

@@ -11,6 +11,7 @@
     "start": "node dist/server.js"
   },
   "dependencies": {
+    "@livekit/protocol": "^1.43.2",
     "@studio/shared": "workspace:*",
     "@supabase/supabase-js": "^2.84.0",
     "cors": "^2.8.5",

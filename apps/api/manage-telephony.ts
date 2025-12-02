@@ -136,7 +136,7 @@ Example:
     case 'activate':
       if (!agentId) {
         console.error('❌ Agent ID is required for activate command');
-        console.log('Usage: tsx manage-telephony.ts activate <agent-id>');
+        console.log('Usage: npx tsx manage-telephony.ts activate <agent-id>');
         process.exit(1);
       }
       await activateConfig(agentId);

@@ -44,6 +44,7 @@ export interface DbTelephonyConfig {
   phone_number: string;
   exophone_sid: string;
   inbound_trunk_id: string;
+  outbound_trunk_id: string;
   sip_domain: string;
   dispatch_rule_id: string | null;
   is_active: boolean;
