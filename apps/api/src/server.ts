@@ -539,6 +539,55 @@ app.get('/api/internal/agents/:agentId', async (req: Request, res: Response) => 
   }
 });
 
+// Internal endpoint to find agent by ID prefix (from room name)
+app.get('/api/internal/agents/by-prefix/:prefix', async (req: Request, res: Response) => {
+  // Simple API key auth for internal agent calls
+  const apiKey = req.headers['x-api-key'];
+  if (apiKey !== LIVEKIT_API_SECRET) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+
+  const { prefix } = req.params;
+
+  try {
+    // Fetch all agents and filter in JavaScript (simple approach for small datasets)
+    const { supabase } = await import('./supabase.js');
+
+    const { data, error } = await supabase
+      .from('agent_configs')
+      .select('id, user_id, name');
+
+    if (error || !data) {
+      console.error(`[API] Error querying agents:`, error);
+      res.status(500).json({ error: 'Failed to query agents' });
+      return;
+    }
+
+    // Find agent with ID starting with prefix
+    const agent = data.find(a => a.id.startsWith(prefix));
+
+    if (!agent) {
+      console.log(`[API] Agent not found for prefix: ${prefix}`);
+      console.log(`[API] Available agent IDs:`, data.map(a => a.id));
+      res.status(404).json({ error: 'Agent not found for prefix' });
+      return;
+    }
+
+    console.log(`[API] ✅ Found agent by prefix: ${agent.id}`);
+
+    // Return minimal info needed for metadata
+    res.json({
+      id: agent.id,
+      userId: agent.user_id,
+      name: agent.name,
+    });
+  } catch (error) {
+    console.error('[API] Error fetching agent by prefix:', error);
+    res.status(500).json({ error: 'Failed to fetch agent by prefix' });
+  }
+});
+
 // Internal endpoint for agent to get OAuth tokens (requires API key auth)
 app.get('/api/internal/oauth/:userId/:provider', async (req: Request, res: Response) => {
   // Simple API key auth for internal agent calls
@@ -636,6 +685,78 @@ app.get('/api/tools', authenticate, async (req: Request, res: Response) => {
 
 // ============ Telephony Routes ============
 
+// Admin: List all pending telephony configurations (requires API key)
+app.get('/api/admin/telephony/pending', async (req: Request, res: Response) => {
+  // Simple API key auth for admin calls
+  const apiKey = req.headers['x-api-key'];
+  if (apiKey !== LIVEKIT_API_SECRET) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+
+  try {
+    const { supabase } = await import('./supabase.js');
+    const { data, error } = await supabase
+      .from('telephony_configs')
+      .select(`
+        *,
+        agent_configs!inner(id, name, user_id)
+      `)
+      .eq('is_active', false)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Failed to fetch pending configs:', error);
+      res.status(500).json({ error: 'Failed to fetch pending telephony configs' });
+      return;
+    }
+
+    const pendingConfigs = data.map((config: any) => ({
+      id: config.id,
+      agentConfigId: config.agent_config_id,
+      agentName: config.agent_configs.name,
+      userId: config.agent_configs.user_id,
+      phoneNumber: config.phone_number,
+      exophoneSid: config.exophone_sid,
+      sipDomain: config.sip_domain,
+      dispatchRuleId: config.dispatch_rule_id,
+      createdAt: config.created_at,
+    }));
+
+    res.json({
+      total: pendingConfigs.length,
+      configs: pendingConfigs,
+    });
+  } catch (error) {
+    console.error('Error fetching pending configs:', error);
+    res.status(500).json({ error: 'Failed to fetch pending telephony configs' });
+  }
+});
+
+// List owned phone numbers (numbers must be purchased manually through telephony provider)
+app.get('/api/telephony/owned-numbers', authenticate, async (req: Request, res: Response) => {
+  try {
+    const exotel = createExotelClient();
+    const numbers = await exotel.listNumbers();
+
+    res.json({
+      numbers: numbers.map(n => ({
+        sid: n.IncomingPhoneNumber.Sid,
+        phoneNumber: n.IncomingPhoneNumber.PhoneNumber,
+        friendlyName: n.IncomingPhoneNumber.FriendlyName,
+        capabilities: n.IncomingPhoneNumber.Capabilities,
+        dateCreated: n.IncomingPhoneNumber.DateCreated,
+      })),
+    });
+  } catch (error) {
+    console.error('Failed to list owned numbers:', error);
+    res.status(500).json({
+      error: 'Failed to list owned numbers',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
 // Get telephony config for an agent
 app.get('/api/agents/:id/telephony', authenticate, async (req: Request, res: Response) => {
   const userId = (req as Request & { userId: string }).userId;
@@ -657,6 +778,12 @@ app.get('/api/agents/:id/telephony', authenticate, async (req: Request, res: Res
     return;
   }
 
+  // Determine status
+  const status = telephonyConfig.isActive ? 'active' : 'pending_configuration';
+  const statusMessage = telephonyConfig.isActive
+    ? 'Telephony is active and ready to receive calls'
+    : 'Phone number setup in progress. Awaiting final configuration.';
+
   // Return safe response without credentials
   const response: TelephonyStatusResponse = {
     id: telephonyConfig.id,
@@ -673,8 +800,17 @@ app.get('/api/agents/:id/telephony', authenticate, async (req: Request, res: Res
 
   res.json({
     ...response,
+    status,
+    statusMessage,
     sipUri, // Include SIP URI for Exotel configuration
     sipDomain: telephonyConfig.sipDomain,
+    ...((!telephonyConfig.isActive) && {
+      nextSteps: [
+        'Complete telephony provider configuration',
+        'Verify phone number is properly configured',
+        'Once confirmed, activate telephony for this agent'
+      ]
+    })
   });
 });
 
@@ -705,80 +841,75 @@ app.post(
     }
 
     const data = req.body as CreateTelephonyConfigRequest;
-    const region = data.region || 'MH';
-    
+
     // Check original body for phoneNumber (in case Zod stripped it)
     const originalBody = (req as any).originalBody || {};
     const providedPhoneNumber = (data as any).phoneNumber || originalBody.phoneNumber;
-    
+
     console.log('[Telephony] Validated data:', JSON.stringify(data));
     console.log('[Telephony] Original body:', JSON.stringify(originalBody));
     console.log('[Telephony] Provided phoneNumber:', providedPhoneNumber);
 
+    // Phone number is required (must be purchased manually from telephony provider)
+    if (!providedPhoneNumber || typeof providedPhoneNumber !== 'string' || providedPhoneNumber.trim().length === 0) {
+      res.status(400).json({
+        error: 'Phone number is required. Please purchase a number from your telephony provider first.'
+      });
+      return;
+    }
+
     try {
       const exotel = createExotelClient();
-      let phoneNumber: string;
-      let exophoneSid: string;
-      let purchased: ExophoneResponse;
+      const phoneNumber = providedPhoneNumber.trim();
 
-      // 1. Use existing number or buy new one
-      if (providedPhoneNumber && typeof providedPhoneNumber === 'string' && providedPhoneNumber.trim().length > 0) {
-        // Use existing phone number
-        phoneNumber = providedPhoneNumber.trim();
-        console.log(`[Telephony] Using existing phone number: ${phoneNumber}`);
-        
-        // Find the ExophoneSid for this number
-        let existingNumbers: ExophoneResponse[];
-        try {
-          console.log('[Telephony] Calling exotel.listNumbers()...');
-          existingNumbers = await exotel.listNumbers();
-          console.log('[Telephony] Got', existingNumbers.length, 'numbers from Exotel');
-        } catch (listError) {
-          console.error('[Telephony] Failed to list numbers:', listError);
-          console.error('[Telephony] Error stack:', listError instanceof Error ? listError.stack : 'No stack');
-          throw new Error(`Failed to list Exotel numbers: ${listError instanceof Error ? listError.message : String(listError)}`);
-        }
-        console.log('[Telephony] Looking for phone number:', phoneNumber);
-        console.log('[Telephony] Available numbers:', existingNumbers.map(n => n.IncomingPhoneNumber.PhoneNumber));
-        
-        // Normalize phone numbers for comparison (remove +91, spaces, dashes, etc.)
-        const normalizePhone = (num: string): string => {
-          return num.replace(/^\+91/, '').replace(/^91/, '').replace(/[\s\-\(\)]/g, '');
-        };
-        
-        const normalizedSearch = normalizePhone(phoneNumber);
-        console.log('[Telephony] Normalized search:', normalizedSearch);
-        
-        const existingNumber = existingNumbers.find((n) => {
-          const num = n.IncomingPhoneNumber.PhoneNumber;
-          const normalizedNum = normalizePhone(num);
-          console.log(`[Telephony] Comparing: "${num}" (normalized: "${normalizedNum}") with "${phoneNumber}" (normalized: "${normalizedSearch}")`);
-          return normalizedNum === normalizedSearch || num === phoneNumber || num === `+91${normalizedSearch}` || num === `91${normalizedSearch}`;
-        });
+      console.log(`[Telephony] Using phone number: ${phoneNumber}`);
 
-        if (!existingNumber) {
-          res.status(400).json({ 
-            error: `Phone number ${phoneNumber} not found in your Exotel account. Available numbers: ${existingNumbers.map(n => n.IncomingPhoneNumber.PhoneNumber).join(', ') || 'none'}. Please verify the number or buy a new one.` 
-          });
-          return;
-        }
-
-        exophoneSid = existingNumber.IncomingPhoneNumber.Sid;
-        purchased = existingNumber;
-        console.log(`[Telephony] Found existing Exophone SID: ${exophoneSid}`);
-      } else {
-        // Buy new Exotel virtual number
-        const available = await exotel.searchAvailableNumbers(region);
-
-        if (!available || available.length === 0) {
-          res.status(400).json({ error: `No available phone numbers in region ${region}. Try a different region.` });
-          return;
-        }
-
-        phoneNumber = available[0].phone_number;
-        purchased = await exotel.buyNumber(phoneNumber, `agent-${req.params.id.slice(0, 8)}`);
-        exophoneSid = purchased.IncomingPhoneNumber.Sid;
+      // Find the ExophoneSid for this number
+      let existingNumbers: ExophoneResponse[];
+      try {
+        console.log('[Telephony] Calling exotel.listNumbers()...');
+        existingNumbers = await exotel.listNumbers();
+        console.log('[Telephony] Got', existingNumbers.length, 'numbers from Exotel');
+      } catch (listError) {
+        console.error('[Telephony] Failed to list numbers:', listError);
+        console.error('[Telephony] Error stack:', listError instanceof Error ? listError.stack : 'No stack');
+        throw new Error(`Failed to list Exotel numbers: ${listError instanceof Error ? listError.message : String(listError)}`);
       }
+      console.log('[Telephony] Looking for phone number:', phoneNumber);
+      console.log('[Telephony] Available numbers:', existingNumbers.map(n => n.IncomingPhoneNumber.PhoneNumber));
+
+      // Normalize phone numbers for comparison
+      // Exotel returns: 02247790694
+      // Frontend sends: +912247790694
+      // Both should normalize to: 2247790694
+      const normalizePhone = (num: string): string => {
+        return num
+          .replace(/^\+91/, '')  // Remove +91
+          .replace(/^91/, '')    // Remove 91
+          .replace(/^0/, '')     // Remove leading 0 (Exotel format)
+          .replace(/[\s\-\(\)]/g, ''); // Remove spaces, dashes, etc.
+      };
+
+      const normalizedSearch = normalizePhone(phoneNumber);
+      console.log('[Telephony] Normalized search:', normalizedSearch);
+
+      const existingNumber = existingNumbers.find((n) => {
+        const num = n.IncomingPhoneNumber.PhoneNumber;
+        const normalizedNum = normalizePhone(num);
+        console.log(`[Telephony] Comparing: "${num}" (normalized: "${normalizedNum}") with "${phoneNumber}" (normalized: "${normalizedSearch}")`);
+        return normalizedNum === normalizedSearch;
+      });
+
+      if (!existingNumber) {
+        res.status(400).json({
+          error: `Phone number ${phoneNumber} not found in your account. Available numbers: ${existingNumbers.map(n => n.IncomingPhoneNumber.PhoneNumber).join(', ') || 'none'}. Please verify the number is properly configured.`
+        });
+        return;
+      }
+
+      const exophoneSid = existingNumber.IncomingPhoneNumber.Sid;
+      console.log(`[Telephony] Found existing Exophone SID: ${exophoneSid}`);
+      console.log(`[Telephony] Using phone number: ${phoneNumber}`);
 
       // 2. Create LiveKit trunk and dispatch rule for this agent
       const sipResult = await setupTelephonyForAgent(
@@ -823,11 +954,18 @@ app.post(
 
       res.status(201).json({
         ...response,
+        status: 'pending_configuration',
+        statusMessage: 'Telephony setup initiated. Awaiting final configuration.',
         sipConfig: {
           sipUri: sipResult.sipUri,
           sipDomain: sipResult.sipDomain,
         },
-        message: `Phone number ${phoneNumber} provisioned. Contact Exotel Support to map this number to SIP domain: ${sipResult.sipDomain}`,
+        nextSteps: [
+          'Complete telephony provider configuration',
+          'Verify phone number is properly routed',
+          'Once confirmed, activate telephony for this agent'
+        ],
+        message: `Phone number ${phoneNumber} has been configured. Please complete setup with your telephony provider.`,
       });
     } catch (error) {
       console.error('Failed to setup telephony:', error);
@@ -840,6 +978,58 @@ app.post(
     }
   }
 );
+
+// Activate telephony after Exotel configuration is complete
+app.patch('/api/agents/:id/telephony/activate', authenticate, async (req: Request, res: Response) => {
+  const userId = (req as Request & { userId: string }).userId;
+  const agentConfig = await db.getAgentConfig(req.params.id);
+
+  if (!agentConfig) {
+    res.status(404).json({ error: 'Agent not found' });
+    return;
+  }
+
+  if (agentConfig.userId !== userId) {
+    res.status(403).json({ error: 'Forbidden' });
+    return;
+  }
+
+  const telephonyConfig = await db.getTelephonyConfigByAgentId(req.params.id);
+  if (!telephonyConfig) {
+    res.status(404).json({ error: 'Telephony not configured for this agent' });
+    return;
+  }
+
+  if (telephonyConfig.isActive) {
+    res.status(200).json({
+      message: 'Telephony is already active',
+      isActive: true,
+    });
+    return;
+  }
+
+  try {
+    // Mark as active
+    const updated = await db.updateTelephonyConfig(telephonyConfig.id, {
+      isActive: true,
+    });
+
+    if (!updated) {
+      res.status(500).json({ error: 'Failed to activate telephony' });
+      return;
+    }
+
+    res.json({
+      message: 'Telephony activated successfully! Your agent can now receive calls.',
+      status: 'active',
+      phoneNumber: updated.phoneNumber,
+      isActive: true,
+    });
+  } catch (error) {
+    console.error('Failed to activate telephony:', error);
+    res.status(500).json({ error: 'Failed to activate telephony' });
+  }
+});
 
 // Delete telephony config for an agent
 app.delete('/api/agents/:id/telephony', authenticate, async (req: Request, res: Response) => {

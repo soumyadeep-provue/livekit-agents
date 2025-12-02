@@ -14,6 +14,7 @@ export function TelephonySettings({ userId, agentId, agentName }: TelephonySetti
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const [activating, setActivating] = useState(false);
 
   // Call Me state
   const [callMeNumber, setCallMeNumber] = useState('');
@@ -21,10 +22,16 @@ export function TelephonySettings({ userId, agentId, agentName }: TelephonySetti
   const [callStatus, setCallStatus] = useState<'idle' | 'calling' | 'connected' | 'error'>('idle');
   const [callError, setCallError] = useState<string | null>(null);
 
-  // Form state
-  const [formData, setFormData] = useState<CreateTelephonyConfigRequest>({
-    region: 'MH', // Default to Maharashtra/Mumbai
-  });
+  // Owned numbers state
+  const [ownedNumbers, setOwnedNumbers] = useState<Array<{
+    sid: string;
+    phoneNumber: string;
+    friendlyName: string;
+    capabilities: { Voice: boolean; SMS: boolean };
+    dateCreated: string;
+  }>>([]);
+  const [loadingNumbers, setLoadingNumbers] = useState(false);
+  const [selectedNumber, setSelectedNumber] = useState<string>('');
 
   useEffect(() => {
     loadTelephonyConfig();
@@ -42,20 +49,78 @@ export function TelephonySettings({ userId, agentId, agentName }: TelephonySetti
     }
   };
 
+  const formatPhoneNumber = (phoneNumber: string): string => {
+    // Ensure phone number is in +91 format for Exotel trunk alias
+    if (phoneNumber.startsWith('+91')) {
+      return phoneNumber;
+    }
+    if (phoneNumber.startsWith('91')) {
+      return `+${phoneNumber}`;
+    }
+    if (phoneNumber.startsWith('0')) {
+      return `+91${phoneNumber.substring(1)}`;
+    }
+    return `+91${phoneNumber}`;
+  };
+
+  const loadOwnedNumbers = async () => {
+    setLoadingNumbers(true);
+    setError(null);
+    try {
+      const data = await api.getOwnedNumbers(userId);
+      // Format all phone numbers to +91 format
+      const formattedNumbers = data.numbers.map(num => ({
+        ...num,
+        phoneNumber: formatPhoneNumber(num.phoneNumber),
+      }));
+      setOwnedNumbers(formattedNumbers);
+      if (formattedNumbers.length === 0) {
+        setError('No phone numbers found. Please purchase a number from your telephony provider first.');
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load phone numbers');
+    } finally {
+      setLoadingNumbers(false);
+    }
+  };
+
   const handleSetup = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!selectedNumber) {
+      setError('Please select a phone number');
+      return;
+    }
+
     setSaving(true);
     setError(null);
 
     try {
-      const config = await api.setupTelephony(userId, agentId, formData);
+      // Ensure phone number is in +91 format for Exotel trunk alias
+      const formattedNumber = formatPhoneNumber(selectedNumber);
+      const config = await api.setupTelephony(userId, agentId, { phoneNumber: formattedNumber });
       setTelephonyConfig(config);
       setShowForm(false);
-      setFormData({ region: 'MH' });
+      setSelectedNumber('');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to setup telephony');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleActivate = async () => {
+    if (!confirm('Are you sure your telephony provider has completed the configuration?')) return;
+
+    setActivating(true);
+    setError(null);
+
+    try {
+      await api.activateTelephony(userId, agentId);
+      await loadTelephonyConfig(); // Reload to get updated status
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to activate telephony');
+    } finally {
+      setActivating(false);
     }
   };
 
@@ -122,6 +187,10 @@ export function TelephonySettings({ userId, agentId, agentName }: TelephonySetti
 
   // If telephony is configured, show status
   if (telephonyConfig) {
+    const statusConfig = telephonyConfig.isActive
+      ? { label: 'Active', bg: 'rgba(34, 197, 94, 0.2)', color: '#22c55e' }
+      : { label: 'Pending Setup', bg: 'rgba(251, 191, 36, 0.2)', color: '#f59e0b' };
+
     return (
       <div className="card" style={{ marginTop: '1rem' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
@@ -130,10 +199,10 @@ export function TelephonySettings({ userId, agentId, agentName }: TelephonySetti
             padding: '0.25rem 0.75rem',
             borderRadius: '1rem',
             fontSize: '0.875rem',
-            background: telephonyConfig.isActive ? 'rgba(34, 197, 94, 0.2)' : 'rgba(239, 68, 68, 0.2)',
-            color: telephonyConfig.isActive ? '#22c55e' : '#ef4444',
+            background: statusConfig.bg,
+            color: statusConfig.color,
           }}>
-            {telephonyConfig.isActive ? 'Active' : 'Inactive'}
+            {statusConfig.label}
           </span>
         </div>
 
@@ -207,6 +276,24 @@ export function TelephonySettings({ userId, agentId, agentName }: TelephonySetti
           </div>
         )}
 
+        {!telephonyConfig.isActive && (
+          <div style={{
+            padding: '1rem',
+            background: 'rgba(251, 191, 36, 0.1)',
+            border: '1px solid rgba(251, 191, 36, 0.3)',
+            borderRadius: '0.5rem',
+            marginBottom: '1rem'
+          }}>
+            <h4 style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem', color: '#f59e0b' }}>
+              ⏳ Awaiting Activation
+            </h4>
+            <p style={{ fontSize: '0.875rem', margin: 0, color: 'var(--text-secondary)' }}>
+              Your phone number has been configured. Our team is completing the final setup with the telephony provider.
+              You'll be notified once your agent is ready to receive calls.
+            </p>
+          </div>
+        )}
+
         {error && (
           <div style={{ color: '#ef4444', marginBottom: '1rem' }}>{error}</div>
         )}
@@ -231,42 +318,65 @@ export function TelephonySettings({ userId, agentId, agentName }: TelephonySetti
       {!showForm ? (
         <div style={{ textAlign: 'center' }}>
           <p style={{ color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-            Get an Indian virtual number (+91) to enable phone calls with your agent. Supports both inbound and outbound calling.
+            Assign a phone number to enable calls with your agent. Supports both inbound and outbound calling.
           </p>
           <button
             className="btn btn-primary"
-            onClick={() => setShowForm(true)}
+            onClick={() => {
+              setShowForm(true);
+              loadOwnedNumbers();
+            }}
           >
-            Get Phone Number
+            Add Phone Number
           </button>
         </div>
       ) : (
         <form onSubmit={handleSetup}>
           <p style={{ color: 'var(--text-secondary)', marginBottom: '1rem', fontSize: '0.875rem' }}>
-            Get an Indian virtual number (Exophone) for your agent. The number will be provisioned automatically via Exotel.
+            Select a phone number from your account to assign to this agent.
           </p>
 
-          <div className="form-group">
-            <label className="form-label">Region</label>
-            <select
-              className="form-input"
-              value={formData.region || 'MH'}
-              onChange={(e) => setFormData({ ...formData, region: e.target.value })}
-              required
-            >
-              <option value="MH">Maharashtra / Mumbai</option>
-              <option value="DL">Delhi</option>
-              <option value="KA">Karnataka / Bangalore</option>
-              <option value="TN">Tamil Nadu / Chennai</option>
-              <option value="WB">West Bengal / Kolkata</option>
-              <option value="GJ">Gujarat / Ahmedabad</option>
-              <option value="RJ">Rajasthan / Jaipur</option>
-              <option value="UP">Uttar Pradesh / Lucknow</option>
-            </select>
-            <small style={{ color: 'var(--text-secondary)' }}>
-              Select the Indian telecom circle for your virtual number
-            </small>
-          </div>
+          {loadingNumbers ? (
+            <div style={{ textAlign: 'center', padding: '2rem' }}>
+              <div className="spinner" style={{ margin: '0 auto 0.5rem' }} />
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>Loading phone numbers...</p>
+            </div>
+          ) : ownedNumbers.length === 0 ? (
+            <div style={{
+              padding: '1rem',
+              background: 'rgba(239, 68, 68, 0.1)',
+              border: '1px solid rgba(239, 68, 68, 0.3)',
+              borderRadius: '0.375rem',
+              marginBottom: '1rem'
+            }}>
+              <p style={{ fontSize: '0.875rem', margin: 0, color: '#ef4444' }}>
+                No phone numbers found in your account. Please purchase a number from your telephony provider first.
+              </p>
+            </div>
+          ) : (
+            <div className="form-group">
+              <label className="form-label">Phone Number</label>
+              <select
+                className="form-input"
+                value={selectedNumber}
+                onChange={(e) => {
+                  setSelectedNumber(e.target.value);
+                  setError(null);
+                }}
+                required
+              >
+                <option value="">Select a phone number</option>
+                {ownedNumbers.map((number) => (
+                  <option key={number.sid} value={number.phoneNumber}>
+                    {number.phoneNumber}
+                  </option>
+                ))}
+              </select>
+              <small style={{ color: 'var(--text-secondary)' }}>
+                Choose from your available phone numbers
+              </small>
+            </div>
+          )}
 
           <div style={{
             padding: '0.75rem',
@@ -279,9 +389,9 @@ export function TelephonySettings({ userId, agentId, agentName }: TelephonySetti
               <strong>What happens next:</strong>
             </p>
             <ul style={{ fontSize: '0.875rem', margin: '0.5rem 0 0 1.25rem', paddingLeft: 0 }}>
-              <li>A virtual number will be purchased from Exotel</li>
-              <li>Both inbound and outbound calling will be enabled</li>
-              <li>Number will be active within 24-48 hours</li>
+              <li>Phone number will be configured for this agent</li>
+              <li>Complete setup with your telephony provider</li>
+              <li>Activate once provider confirms configuration</li>
             </ul>
           </div>
 
@@ -293,7 +403,11 @@ export function TelephonySettings({ userId, agentId, agentName }: TelephonySetti
             <button
               type="button"
               className="btn btn-secondary"
-              onClick={() => setShowForm(false)}
+              onClick={() => {
+                setShowForm(false);
+                setSelectedNumber('');
+                setError(null);
+              }}
               style={{ flex: 1 }}
             >
               Cancel
@@ -301,10 +415,10 @@ export function TelephonySettings({ userId, agentId, agentName }: TelephonySetti
             <button
               type="submit"
               className="btn btn-primary"
-              disabled={saving}
+              disabled={saving || !selectedNumber || ownedNumbers.length === 0}
               style={{ flex: 1 }}
             >
-              {saving ? 'Provisioning...' : 'Get Phone Number'}
+              {saving ? 'Setting up...' : 'Continue'}
             </button>
           </div>
         </form>

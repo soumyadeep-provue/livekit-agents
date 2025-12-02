@@ -120,6 +120,18 @@ export const api = {
     }
   },
 
+  async getOwnedNumbers(userId: string): Promise<{
+    numbers: Array<{
+      sid: string;
+      phoneNumber: string;
+      friendlyName: string;
+      capabilities: { Voice: boolean; SMS: boolean };
+      dateCreated: string;
+    }>;
+  }> {
+    return fetchApi('/telephony/owned-numbers', {}, userId);
+  },
+
   async setupTelephony(
     userId: string,
     agentId: string,
@@ -130,6 +142,16 @@ export const api = {
       {
         method: 'POST',
         body: JSON.stringify(data),
+      },
+      userId
+    );
+  },
+
+  async activateTelephony(userId: string, agentId: string): Promise<{ message: string; status: string; phoneNumber: string; isActive: boolean }> {
+    return fetchApi(
+      `/agents/${agentId}/telephony/activate`,
+      {
+        method: 'PATCH',
       },
       userId
     );

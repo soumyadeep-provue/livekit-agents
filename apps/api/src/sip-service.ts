@@ -111,6 +111,12 @@ export async function setupTelephonyForAgent(
           agents: [
             new RoomAgentDispatch({ agentName: TELEPHONY_AGENT_NAME }),
           ],
+          // IMPORTANT: Set metadata on the room so the agent can access agentConfigId
+          metadata: JSON.stringify({
+            agentConfigId,
+            phoneNumber,
+            type: 'inbound',
+          }),
         } as any, // Type assertion needed as RoomConfiguration requires many fields, but SIP dispatch only needs agents
       }
     );

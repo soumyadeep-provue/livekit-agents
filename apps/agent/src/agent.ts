@@ -315,9 +315,44 @@ export default defineAgent({
     console.log('[Agent] Room URL:', ctx.room.name);
 
     // Parse room metadata for personalized configuration
-    const roomMetadata = parseRoomMetadata(ctx.room.metadata);
+    let roomMetadata = parseRoomMetadata(ctx.room.metadata);
     let agentConfig = roomMetadata?.agentConfig;
     const isOutboundCall = roomMetadata?.isOutboundCall ?? false;
+
+    // FALLBACK: If no metadata, try to extract agent config ID from room name
+    // Room names from dispatch rules follow pattern: call-{agentIdPrefix}-...
+    // Example: call-48e23290-_+919503813535_4CxUj5CC62DP
+    if (!roomMetadata?.agentConfigId && ctx.room.name) {
+      const roomNameMatch = ctx.room.name.match(/^call-([a-f0-9]{8})-/);
+      if (roomNameMatch) {
+        const agentIdPrefix = roomNameMatch[1];
+        console.log(`[Agent] 🔍 Extracted agent ID prefix from room name: ${agentIdPrefix}`);
+
+        // Find the full agent ID by querying the database via API
+        try {
+          const apiUrl = process.env.API_URL || 'http://localhost:3001';
+          const response = await fetch(`${apiUrl}/api/internal/agents/by-prefix/${agentIdPrefix}`, {
+            headers: {
+              'x-api-key': process.env.LIVEKIT_API_SECRET!,
+            },
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            // Create synthetic metadata
+            roomMetadata = {
+              agentConfigId: data.id,
+              userId: data.userId,
+            } as ExtendedRoomMetadata;
+            console.log(`[Agent] ✅ Found agent config from room name: ${data.id}`);
+          } else {
+            console.warn(`[Agent] ⚠️  Could not find agent config for prefix: ${agentIdPrefix}`);
+          }
+        } catch (error) {
+          console.error('[Agent] Error fetching agent by prefix:', error);
+        }
+      }
+    }
 
     console.log('[Agent] Parsed metadata:', {
       hasAgentConfig: !!agentConfig,
