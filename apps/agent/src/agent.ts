@@ -268,10 +268,19 @@ function createAssistant(roomName: string, config: AgentRuntimeConfig) {
       execute: async ({ maxResults = 5 }: { maxResults?: number }) => {
         try {
           // Get access token from API
+          console.log(`[Calendar] Fetching token for user: ${userId}`);
           const tokenRes = await fetch(`${apiUrl}/api/internal/oauth/${userId}/google`, {
             headers: { 'x-api-key': process.env.LIVEKIT_API_SECRET! },
           });
-          if (!tokenRes.ok) return 'Cannot access your calendar. Please connect Google Calendar in settings.';
+          if (!tokenRes.ok) {
+            console.error(`[Calendar] Token fetch failed:`, {
+              status: tokenRes.status,
+              statusText: tokenRes.statusText,
+              userId,
+              url: `${apiUrl}/api/internal/oauth/${userId}/google`,
+            });
+            return 'Cannot access your calendar. Please connect Google Calendar in settings.';
+          }
           const { accessToken } = await tokenRes.json() as { accessToken: string };
 
           // Fetch calendar events
@@ -314,10 +323,19 @@ function createAssistant(roomName: string, config: AgentRuntimeConfig) {
       },
       execute: async ({ summary, startTime, endTime, description }: { summary: string; startTime: string; endTime?: string; description?: string }) => {
         try {
+          console.log(`[Calendar] Creating event for user: ${userId}`);
           const tokenRes = await fetch(`${apiUrl}/api/internal/oauth/${userId}/google`, {
             headers: { 'x-api-key': process.env.LIVEKIT_API_SECRET! },
           });
-          if (!tokenRes.ok) return 'Cannot access your calendar. Please connect Google Calendar in settings.';
+          if (!tokenRes.ok) {
+            console.error(`[Calendar] Token fetch failed:`, {
+              status: tokenRes.status,
+              statusText: tokenRes.statusText,
+              userId,
+              url: `${apiUrl}/api/internal/oauth/${userId}/google`,
+            });
+            return 'Cannot access your calendar. Please connect Google Calendar in settings.';
+          }
           const { accessToken } = await tokenRes.json() as { accessToken: string };
 
           const start = new Date(startTime);
@@ -465,6 +483,12 @@ export default defineAgent({
     console.log('[Agent] Is Telephony Call:', isTelephonyCall);
 
     // Merge with defaults
+    console.log('[Agent] Room metadata:', {
+      userId: roomMetadata?.userId,
+      agentConfigId: roomMetadata?.agentConfigId,
+      agentConfigUserId: agentConfig?.userId,
+    });
+
     const config: AgentRuntimeConfig = {
       instructions: agentConfig?.instructions ?? DEFAULT_CONFIG.instructions,
       voice: agentConfig?.voice ?? DEFAULT_CONFIG.voice,
@@ -474,7 +498,8 @@ export default defineAgent({
       sttModel: agentConfig?.sttModel ?? DEFAULT_CONFIG.sttModel,
       ttsModel: agentConfig?.ttsModel ?? DEFAULT_CONFIG.ttsModel,
       tools: agentConfig?.tools ?? DEFAULT_CONFIG.tools,
-      userId: roomMetadata?.userId ?? 'unknown',
+      // Use roomMetadata userId if available, otherwise fall back to agent owner's userId
+      userId: roomMetadata?.userId ?? agentConfig?.userId ?? 'unknown',
       enableKnowledgeBase: agentConfig?.enableKnowledgeBase ?? false,
       agentConfigId: roomMetadata?.agentConfigId,
     };
