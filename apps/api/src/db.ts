@@ -29,6 +29,7 @@ function dbAgentToAgentConfig(row: DbAgentConfig): AgentConfig {
     tools: row.tools,
     isPublic: row.is_public,
     shareCode: row.share_code ?? undefined,
+    enableKnowledgeBase: row.enable_knowledge_base ?? false,
     createdAt: new Date(row.created_at),
     updatedAt: new Date(row.updated_at),
   };
@@ -120,6 +121,7 @@ export const db = {
         tools: data.tools ?? [],
         is_public: data.isPublic ?? false,
         share_code: shareCode,
+        enable_knowledge_base: data.enableKnowledgeBase ?? false,
       })
       .select()
       .single();
@@ -188,6 +190,7 @@ export const db = {
     if (data.ttsModel !== undefined) updateData.tts_model = data.ttsModel;
     if (data.tools !== undefined) updateData.tools = data.tools;
     if (data.isPublic !== undefined) updateData.is_public = data.isPublic;
+    if (data.enableKnowledgeBase !== undefined) updateData.enable_knowledge_base = data.enableKnowledgeBase;
     updateData.share_code = shareCode;
 
     const { data: row, error } = await supabase
@@ -461,7 +464,7 @@ export const db = {
   },
 
   async getAllPlatformConfigs(): Promise<Record<string, string>> {
-    const { data, error } = await supabase
+    const { data, error} = await supabase
       .from('platform_configs')
       .select('key, value');
 
@@ -472,5 +475,73 @@ export const db = {
       configs[row.key] = row.value;
     }
     return configs;
+  },
+
+  // Knowledge Base Documents
+  async createKnowledgeBaseDocument(
+    agentConfigId: string,
+    data: {
+      documentName: string;
+      documentType: 'pdf' | 'txt' | 'md' | 'json';
+      fileUrl?: string;
+      fileSizeBytes?: number;
+      chunkCount?: number;
+    }
+  ): Promise<{ id: string }> {
+    const { data: row, error } = await supabase
+      .from('agent_knowledge_base')
+      .insert({
+        agent_config_id: agentConfigId,
+        document_name: data.documentName,
+        document_type: data.documentType,
+        file_url: data.fileUrl || null,
+        file_size_bytes: data.fileSizeBytes || null,
+        chunk_count: data.chunkCount || 0,
+      })
+      .select('id')
+      .single();
+
+    if (error) throw new Error(`Failed to create knowledge base document: ${error.message}`);
+    return { id: row.id };
+  },
+
+  async getKnowledgeBaseDocuments(agentConfigId: string): Promise<any[]> {
+    const { data, error } = await supabase
+      .from('agent_knowledge_base')
+      .select('*')
+      .eq('agent_config_id', agentConfigId)
+      .order('created_at', { ascending: false });
+
+    if (error) return [];
+    return data;
+  },
+
+  async getKnowledgeBaseDocument(id: string): Promise<any | null> {
+    const { data, error } = await supabase
+      .from('agent_knowledge_base')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (error) return null;
+    return data;
+  },
+
+  async deleteKnowledgeBaseDocument(id: string): Promise<boolean> {
+    const { error } = await supabase
+      .from('agent_knowledge_base')
+      .delete()
+      .eq('id', id);
+
+    return !error;
+  },
+
+  async updateKnowledgeBaseDocumentChunkCount(id: string, chunkCount: number): Promise<boolean> {
+    const { error } = await supabase
+      .from('agent_knowledge_base')
+      .update({ chunk_count: chunkCount })
+      .eq('id', id);
+
+    return !error;
   },
 };

@@ -17,9 +17,13 @@
     "@livekit/agents-plugin-openai": "^1.0.21",
     "@livekit/agents-plugin-silero": "^1.0.21",
     "@livekit/noise-cancellation-node": "^0.1.9",
+    "@llamaindex/openai": "^0.4.22",
     "@studio/shared": "workspace:*",
+    "@supabase/supabase-js": "^2.84.0",
     "dotenv": "^17.2.3",
     "livekit-server-sdk": "^2.13.0",
+    "llama-cloud-services": "^0.4.2",
+    "llamaindex": "^0.12.1",
     "zod": "^3.25.76"
   },
   "devDependencies": {

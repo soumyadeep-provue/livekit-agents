@@ -16,6 +16,8 @@ export const AgentConfigSchema = z.object({
   // Sharing settings
   isPublic: z.boolean().default(false),
   shareCode: z.string().min(8).max(16).optional(), // Unique code for sharing
+  // Knowledge base settings
+  enableKnowledgeBase: z.boolean().default(false),
   createdAt: z.date(),
   updatedAt: z.date(),
 });
@@ -288,4 +290,43 @@ export interface OAuthConnectionStatus {
   email?: string;
   isConnected: boolean;
   connectedAt: Date;
+}
+
+// ============ Knowledge Base ============
+
+// Knowledge base document schema
+export const KnowledgeBaseDocumentSchema = z.object({
+  id: z.string().uuid(),
+  agentConfigId: z.string().uuid(),
+  documentName: z.string().min(1).max(255),
+  documentType: z.enum(['pdf', 'txt', 'md', 'json']),
+  fileUrl: z.string().url().optional(),
+  fileSizeBytes: z.number().int().positive().optional(),
+  chunkCount: z.number().int().nonnegative().default(0),
+  createdAt: z.date(),
+  updatedAt: z.date(),
+});
+
+export type KnowledgeBaseDocument = z.infer<typeof KnowledgeBaseDocumentSchema>;
+
+// Create knowledge base document request
+export const CreateKnowledgeBaseDocumentRequestSchema = z.object({
+  documentName: z.string().min(1).max(255),
+  documentType: z.enum(['pdf', 'txt', 'md', 'json']),
+  fileUrl: z.string().url().optional(),
+  fileSizeBytes: z.number().int().positive().optional(),
+});
+
+export type CreateKnowledgeBaseDocumentRequest = z.infer<typeof CreateKnowledgeBaseDocumentRequestSchema>;
+
+// Knowledge base document status response (safe version)
+export interface KnowledgeBaseDocumentStatus {
+  id: string;
+  agentConfigId: string;
+  documentName: string;
+  documentType: 'pdf' | 'txt' | 'md' | 'json';
+  fileSizeBytes?: number;
+  chunkCount: number;
+  createdAt: Date;
+  updatedAt: Date;
 }

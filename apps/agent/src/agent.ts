@@ -21,6 +21,7 @@ import { RoomMetadataSchema, TOOL_TYPES } from '@studio/shared';
 import dotenv from 'dotenv';
 import { RoomServiceClient } from 'livekit-server-sdk';
 import { fileURLToPath } from 'node:url';
+import * as llamaindex from './llamaindex.js';
 
 dotenv.config({ path: '.env.local' });
 
@@ -35,6 +36,8 @@ interface AgentRuntimeConfig {
   ttsModel: string;
   tools: string[];
   userId: string;
+  enableKnowledgeBase?: boolean;
+  agentConfigId?: string;
 }
 
 // Default configuration when no metadata is provided
@@ -65,6 +68,31 @@ async function hangupCall(roomName: string) {
 function isSipParticipant(participant: { identity: string }): boolean {
   // SIP participants can have identity starting with 'sip_' or '+' (phone number)
   return participant.identity.startsWith('sip_') || participant.identity.startsWith('+');
+}
+
+// Query knowledge base for relevant context using LlamaIndex
+async function queryKnowledgeBase(
+  query: string,
+  agentConfigId: string,
+  topK: number = 3
+): Promise<Array<{ text: string; score: number }>> {
+  try {
+    console.log(`[KnowledgeBaseTool] Querying: ${query.substring(0, 50)}`);
+    console.log(`[KnowledgeBase] Querying LlamaIndex for agent ${agentConfigId}: "${query.substring(0, 100)}..."`);
+
+    // Query LlamaIndex for relevant chunks
+    const results = await llamaindex.queryKnowledgeBase(
+      query,
+      agentConfigId,
+      topK
+    );
+
+    console.log(`[KnowledgeBase] Found ${results.length} relevant snippets`);
+    return results;
+  } catch (error) {
+    console.error(`[KnowledgeBase] Error querying:`, error);
+    return [];
+  }
 }
 
 // Extended room metadata for telephony
@@ -108,6 +136,37 @@ function createAssistant(roomName: string, config: AgentRuntimeConfig) {
   // Build tools object based on configuration
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const tools: Record<string, any> = {};
+
+  // Add knowledge base query tool if enabled
+  if (config.enableKnowledgeBase && config.agentConfigId) {
+    tools.query_knowledge_base = llm.tool({
+      description: 'Search the knowledge base for relevant information to answer the user\'s question. Use this when you need specific information that might be in uploaded documents.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'The search query to look up in the knowledge base',
+          },
+        },
+        required: ['query'],
+      },
+      execute: async ({ query }: { query: string }) => {
+        console.log(`[KnowledgeBaseTool] Querying: ${query}`);
+        const results = await queryKnowledgeBase(query, config.agentConfigId!, 3);
+
+        if (results.length === 0) {
+          return 'No relevant information found in the knowledge base.';
+        }
+
+        const formattedResults = results
+          .map((r, i) => `[Result ${i + 1}] (Relevance: ${(r.score * 100).toFixed(1)}%)\n${r.text}`)
+          .join('\n\n---\n\n');
+
+        return `Found ${results.length} relevant pieces of information:\n\n${formattedResults}`;
+      },
+    });
+  }
 
   // Always add end_call tool (enabled by default for all agents)
   tools.end_call = llm.tool({
@@ -416,7 +475,15 @@ export default defineAgent({
       ttsModel: agentConfig?.ttsModel ?? DEFAULT_CONFIG.ttsModel,
       tools: agentConfig?.tools ?? DEFAULT_CONFIG.tools,
       userId: roomMetadata?.userId ?? 'unknown',
+      enableKnowledgeBase: agentConfig?.enableKnowledgeBase ?? false,
+      agentConfigId: roomMetadata?.agentConfigId,
     };
+
+    // Enhance instructions if knowledge base is enabled
+    if (config.enableKnowledgeBase && config.agentConfigId) {
+      config.instructions = `${config.instructions}\n\nIMPORTANT: You have access to a knowledge base with uploaded documents. When the user asks questions that might be answered by specific information in documents, use the query_knowledge_base tool to search for relevant information before answering.`;
+      console.log('[Agent] Knowledge base enabled for this agent');
+    }
 
     console.log('Starting agent with config:', {
       model: config.model,
@@ -426,6 +493,8 @@ export default defineAgent({
       hasCustomInstructions: !!agentConfig?.instructions,
       isTelephonyCall,
       isOutboundCall,
+      enableKnowledgeBase: config.enableKnowledgeBase,
+      agentConfigId: config.agentConfigId,
     });
 
     // Map TTS model to provider
@@ -630,6 +699,8 @@ console.log('API Key configured:', !!process.env.LIVEKIT_API_KEY);
 console.log('API Secret configured:', !!process.env.LIVEKIT_API_SECRET);
 console.log('OpenAI Key configured:', !!process.env.OPENAI_API_KEY);
 console.log('API URL:', process.env.API_URL || 'http://localhost:3001 (default)');
+console.log('LlamaCloud API Key configured:', !!process.env.LLAMA_CLOUD_API_KEY);
+console.log('Knowledge Base: LlamaCloud');
 console.log('========================================');
 console.log('⏳ Connecting to LiveKit...');
 console.log('========================================\n');

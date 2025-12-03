@@ -10,6 +10,10 @@ import { z } from 'zod';
 import { db } from './db.js';
 import { placeOutboundCall, setupTelephonyForAgent, teardownTelephony, recreateTelephonySetup, listTrunks } from './sip-service.js';
 import { createExotelClient, type ExophoneResponse } from './integrations/exotel-client.js';
+import { indexDocument, queryKnowledgeBase, deleteDocumentEmbeddings } from './knowledge-base.js';
+import multer from 'multer';
+import fs from 'fs/promises';
+import path from 'path';
 
 dotenv.config({ path: '.env.local' });
 
@@ -19,6 +23,22 @@ const PORT = process.env.PORT || 3001;
 // Middleware
 app.use(cors());
 app.use(express.json());
+
+// Multer configuration for file uploads
+const upload = multer({
+  dest: '/tmp/uploads/',
+  limits: {
+    fileSize: 20 * 1024 * 1024, // 20MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = ['application/pdf', 'text/plain', 'text/markdown', 'application/json'];
+    if (allowedTypes.includes(file.mimetype) || file.originalname.endsWith('.md')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid file type. Only PDF, TXT, MD, and JSON files are allowed.'));
+    }
+  },
+});
 
 // LiveKit configuration
 const LIVEKIT_URL = process.env.LIVEKIT_URL!;
@@ -1181,6 +1201,178 @@ app.post(
   }
 );
 
+// ============ Knowledge Base Routes ============
+
+// Upload document to agent's knowledge base
+app.post('/api/agents/:id/knowledge-base/upload', authenticate, upload.single('file'), async (req: Request, res: Response) => {
+  try {
+    const agentConfigId = req.params.id;
+    const file = req.file;
+
+    if (!file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    // Verify agent belongs to user
+    const agentConfig = await db.getAgentConfig(agentConfigId);
+    if (!agentConfig) {
+      await fs.unlink(file.path); // Clean up
+      return res.status(404).json({ error: 'Agent not found' });
+    }
+
+    if (agentConfig.userId !== (req as Request & { userId: string }).userId) {
+      await fs.unlink(file.path); // Clean up
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    // Determine file type
+    const fileType = file.mimetype === 'application/pdf' ? 'pdf' :
+                     file.mimetype === 'application/json' ? 'json' :
+                     file.originalname.endsWith('.md') ? 'md' : 'txt';
+
+    console.log(`[API] Uploading document: ${file.originalname} (${fileType}, ${file.size} bytes)`);
+
+    // Create knowledge base document record
+    const { id: documentId } = await db.createKnowledgeBaseDocument(agentConfigId, {
+      documentName: file.originalname,
+      documentType: fileType as 'pdf' | 'txt' | 'md' | 'json',
+      fileSizeBytes: file.size,
+    });
+
+    // Index document with LlamaIndex
+    try {
+      const chunkCount = await indexDocument(
+        file.path,
+        file.originalname,
+        fileType,
+        agentConfigId,
+        documentId
+      );
+
+      // Update chunk count in database
+      await db.updateKnowledgeBaseDocumentChunkCount(documentId, chunkCount);
+
+      console.log(`[API] Document indexed successfully: ${chunkCount} chunks`);
+    } catch (indexError) {
+      console.error('[API] Error indexing document:', indexError);
+      // Delete the document record if indexing fails
+      await db.deleteKnowledgeBaseDocument(documentId);
+      throw indexError;
+    } finally {
+      // Clean up uploaded file
+      await fs.unlink(file.path);
+    }
+
+    res.json({
+      success: true,
+      documentId,
+      message: 'Document uploaded and indexed successfully',
+    });
+  } catch (error) {
+    console.error('[API] Error uploading document:', error);
+    res.status(500).json({ error: 'Failed to upload document' });
+  }
+});
+
+// Get all documents for an agent's knowledge base
+app.get('/api/agents/:id/knowledge-base/documents', authenticate, async (req: Request, res: Response) => {
+  try {
+    const agentConfigId = req.params.id;
+
+    // Verify agent belongs to user
+    const agentConfig = await db.getAgentConfig(agentConfigId);
+    if (!agentConfig) {
+      return res.status(404).json({ error: 'Agent not found' });
+    }
+
+    if (agentConfig.userId !== (req as Request & { userId: string }).userId) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const documents = await db.getKnowledgeBaseDocuments(agentConfigId);
+
+    // Transform snake_case to camelCase for frontend
+    const transformedDocuments = documents.map(doc => ({
+      id: doc.id,
+      documentName: doc.document_name,
+      documentType: doc.document_type,
+      fileSizeBytes: doc.file_size_bytes,
+      chunkCount: doc.chunk_count,
+      createdAt: doc.created_at,
+    }));
+
+    res.json({ documents: transformedDocuments });
+  } catch (error) {
+    console.error('[API] Error fetching documents:', error);
+    res.status(500).json({ error: 'Failed to fetch documents' });
+  }
+});
+
+// Delete a document from knowledge base
+app.delete('/api/agents/:id/knowledge-base/documents/:docId', authenticate, async (req: Request, res: Response) => {
+  try {
+    const { id: agentConfigId, docId } = req.params;
+
+    // Verify agent belongs to user
+    const agentConfig = await db.getAgentConfig(agentConfigId);
+    if (!agentConfig) {
+      return res.status(404).json({ error: 'Agent not found' });
+    }
+
+    if (agentConfig.userId !== (req as Request & { userId: string }).userId) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    // Get document to verify it belongs to this agent
+    const document = await db.getKnowledgeBaseDocument(docId);
+    if (!document || document.agent_config_id !== agentConfigId) {
+      return res.status(404).json({ error: 'Document not found' });
+    }
+
+    // Delete from LlamaCloud
+    await deleteDocumentEmbeddings(agentConfigId, docId, document.document_name);
+
+    // Delete document record from database
+    await db.deleteKnowledgeBaseDocument(docId);
+
+    console.log(`[API] Document deleted: ${docId}`);
+
+    res.json({ success: true, message: 'Document deleted successfully' });
+  } catch (error) {
+    console.error('[API] Error deleting document:', error);
+    res.status(500).json({ error: 'Failed to delete document' });
+  }
+});
+
+// Query knowledge base (for testing/debugging)
+app.post('/api/agents/:id/knowledge-base/query', authenticate, async (req: Request, res: Response) => {
+  try {
+    const agentConfigId = req.params.id;
+    const { query, topK = 3 } = req.body;
+
+    if (!query) {
+      return res.status(400).json({ error: 'Query is required' });
+    }
+
+    // Verify agent belongs to user
+    const agentConfig = await db.getAgentConfig(agentConfigId);
+    if (!agentConfig) {
+      return res.status(404).json({ error: 'Agent not found' });
+    }
+
+    if (agentConfig.userId !== (req as Request & { userId: string }).userId) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const results = await queryKnowledgeBase(query, agentConfigId, topK);
+
+    res.json({ results });
+  } catch (error) {
+    console.error('[API] Error querying knowledge base:', error);
+    res.status(500).json({ error: 'Failed to query knowledge base' });
+  }
+});
+
 // Start server
 app.listen(PORT, () => {
   console.log(`API server running on http://localhost:${PORT}`);
@@ -1193,5 +1385,6 @@ app.listen(PORT, () => {
     GOOGLE_CLIENT_ID: GOOGLE_CLIENT_ID ? 'set' : 'NOT SET',
     GOOGLE_CLIENT_SECRET: GOOGLE_CLIENT_SECRET ? 'set' : 'NOT SET',
     PERPLEXITY_API_KEY: process.env.PERPLEXITY_API_KEY ? 'set' : 'NOT SET',
+    OPENAI_API_KEY: process.env.OPENAI_API_KEY ? 'set' : 'NOT SET',
   });
 });

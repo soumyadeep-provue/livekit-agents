@@ -34,6 +34,7 @@ export interface DbAgentConfig {
   tools: string[];
   is_public: boolean;
   share_code: string | null;
+  enable_knowledge_base: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -70,6 +71,18 @@ export interface DbOAuthConnection {
   expires_at: string | null;
   scope: string | null;
   email: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DbKnowledgeBaseDocument {
+  id: string;
+  agent_config_id: string;
+  document_name: string;
+  document_type: string;
+  file_url: string | null;
+  file_size_bytes: number | null;
+  chunk_count: number;
   created_at: string;
   updated_at: string;
 }

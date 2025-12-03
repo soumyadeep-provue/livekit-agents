@@ -12,12 +12,18 @@
   },
   "dependencies": {
     "@livekit/protocol": "^1.43.2",
+    "@llamaindex/openai": "^0.4.22",
     "@studio/shared": "workspace:*",
     "@supabase/supabase-js": "^2.84.0",
+    "@types/multer": "^2.0.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
     "livekit-server-sdk": "^2.13.0",
+    "llama-cloud-services": "^0.4.2",
+    "llamaindex": "^0.12.1",
+    "multer": "^2.0.2",
+    "pdf-parse": "^2.4.5",
     "uuid": "^11.1.0",
     "xml2js": "^0.6.2",
     "zod": "^3.25.76"

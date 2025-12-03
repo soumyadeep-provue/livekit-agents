@@ -5,6 +5,7 @@ import { LLM_OPTIONS, STT_OPTIONS, TTS_OPTIONS, VOICE_OPTIONS } from '@studio/sh
 
 import { TelephonySettings } from './TelephonySettings';
 import { ToolsSettings } from './ToolsSettings';
+import { KnowledgeBaseSettings } from './KnowledgeBaseSettings';
 import { api } from '../lib/api';
 
 interface AgentFormProps {
@@ -25,6 +26,7 @@ export function AgentForm({ agent, userId, onSubmit, onCancel }: AgentFormProps)
     ttsModel: agent?.ttsModel ?? 'openai/gpt-4o-mini-tts',
     tools: agent?.tools ?? [],
     isPublic: agent?.isPublic ?? false,
+    enableKnowledgeBase: agent?.enableKnowledgeBase ?? false,
   });
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -33,7 +35,7 @@ export function AgentForm({ agent, userId, onSubmit, onCancel }: AgentFormProps)
   };
 
   return (
-    <div className="card" style={{ maxWidth: '600px', margin: '0 auto' }}>
+    <div className="card" style={{ maxWidth: '600px', margin: '0 auto', marginBottom: '4rem' }}>
       <div className="modal-header">
         <h2>{agent ? 'Edit Agent' : 'Create New Agent'}</h2>
       </div>
@@ -240,6 +242,19 @@ export function AgentForm({ agent, userId, onSubmit, onCancel }: AgentFormProps)
           onUpdate={async (data: UpdateAgentConfigRequest) => {
             const updated = await api.updateAgent(userId, agent.id, data);
             setFormData(prev => ({ ...prev, tools: updated.tools }));
+          }}
+        />
+      )}
+
+      {/* Knowledge Base settings - only shown when editing an existing agent */}
+      {agent && userId && (
+        <KnowledgeBaseSettings
+          userId={userId}
+          agentId={agent.id}
+          enableKnowledgeBase={formData.enableKnowledgeBase || false}
+          onUpdate={async (data: UpdateAgentConfigRequest) => {
+            const updated = await api.updateAgent(userId, agent.id, data);
+            setFormData(prev => ({ ...prev, enableKnowledgeBase: updated.enableKnowledgeBase }));
           }}
         />
       )}

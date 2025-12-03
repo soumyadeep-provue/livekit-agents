@@ -211,4 +211,59 @@ export const api = {
   }>> {
     return fetchApi('/tools', {}, userId);
   },
+
+  // Knowledge Base
+  async getKnowledgeBaseDocuments(userId: string, agentId: string): Promise<{
+    documents: Array<{
+      id: string;
+      documentName: string;
+      documentType: string;
+      fileSizeBytes: number | null;
+      chunkCount: number;
+      createdAt: string;
+    }>;
+  }> {
+    return fetchApi(`/agents/${agentId}/knowledge-base/documents`, {}, userId);
+  },
+
+  async uploadKnowledgeBaseDocument(
+    userId: string,
+    agentId: string,
+    file: File
+  ): Promise<{ success: boolean; documentId: string; message: string }> {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const headers: HeadersInit = {};
+    if (userId) {
+      (headers as Record<string, string>)['x-user-id'] = userId;
+    }
+
+    const response = await fetch(`${API_BASE}/agents/${agentId}/knowledge-base/upload`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Upload failed' }));
+      throw new Error(error.error || 'Upload failed');
+    }
+
+    return response.json();
+  },
+
+  async deleteKnowledgeBaseDocument(
+    userId: string,
+    agentId: string,
+    documentId: string
+  ): Promise<void> {
+    return fetchApi<void>(
+      `/agents/${agentId}/knowledge-base/documents/${documentId}`,
+      {
+        method: 'DELETE',
+      },
+      userId
+    );
+  },
 };
