@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 
 import type { AgentConfig, CreateAgentConfigRequest, UpdateAgentConfigRequest } from '@studio/shared';
-import { LLM_OPTIONS, STT_OPTIONS, TTS_OPTIONS, VOICE_OPTIONS } from '@studio/shared';
+import { LLM_OPTIONS, STT_OPTIONS, TTS_OPTIONS, getCompatibleVoices, groupVoicesByCategory } from '@studio/shared';
 
 import { TelephonySettings } from './TelephonySettings';
 import { ToolsSettings } from './ToolsSettings';
@@ -28,6 +28,24 @@ export function AgentForm({ agent, userId, onSubmit, onCancel }: AgentFormProps)
     isPublic: agent?.isPublic ?? false,
     enableKnowledgeBase: agent?.enableKnowledgeBase ?? false,
   });
+
+  // Get compatible voices for the selected TTS model
+  const compatibleVoices = useMemo(() => getCompatibleVoices(formData.ttsModel), [formData.ttsModel]);
+
+  // Group voices by category for organized display
+  const groupedVoices = useMemo(() => groupVoicesByCategory(compatibleVoices), [compatibleVoices]);
+
+  // Auto-select a compatible voice when TTS model changes
+  useEffect(() => {
+    // Check if current voice is compatible with selected TTS model
+    const isCurrentVoiceCompatible = compatibleVoices.some((v) => v.id === formData.voice);
+
+    if (!isCurrentVoiceCompatible && compatibleVoices.length > 0) {
+      // Auto-select the first compatible voice
+      const firstVoice = compatibleVoices[0];
+      setFormData((prev) => ({ ...prev, voice: firstVoice.id }));
+    }
+  }, [formData.ttsModel, compatibleVoices, formData.voice]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -88,12 +106,19 @@ export function AgentForm({ agent, userId, onSubmit, onCancel }: AgentFormProps)
             value={formData.voice}
             onChange={(e) => setFormData({ ...formData, voice: e.target.value })}
           >
-            {VOICE_OPTIONS.map((voice) => (
-              <option key={voice.id} value={voice.id}>
-                {voice.name} ({voice.provider})
-              </option>
+            {Array.from(groupedVoices.entries()).map(([category, voices]) => (
+              <optgroup key={category} label={category}>
+                {voices.map((voice) => (
+                  <option key={voice.id} value={voice.id}>
+                    {voice.name}
+                  </option>
+                ))}
+              </optgroup>
             ))}
           </select>
+          <small style={{ color: 'var(--text-secondary)', marginTop: '0.25rem', display: 'block' }}>
+            Only voices compatible with the selected TTS model are shown
+          </small>
         </div>
 
         <div className="form-group">
@@ -136,11 +161,35 @@ export function AgentForm({ agent, userId, onSubmit, onCancel }: AgentFormProps)
               setFormData({ ...formData, sttModel: e.target.value as CreateAgentConfigRequest['sttModel'] })
             }
           >
-            {STT_OPTIONS.map((model) => (
-              <option key={model.id} value={model.id}>
-                {model.name}
-              </option>
-            ))}
+            {/* Group by provider */}
+            <optgroup label="OpenAI">
+              {STT_OPTIONS.filter((m) => m.provider === 'openai').map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.name}
+                </option>
+              ))}
+            </optgroup>
+            <optgroup label="Deepgram">
+              {STT_OPTIONS.filter((m) => m.provider === 'deepgram').map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.name}
+                </option>
+              ))}
+            </optgroup>
+            <optgroup label="AssemblyAI">
+              {STT_OPTIONS.filter((m) => m.provider === 'assemblyai').map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.name}
+                </option>
+              ))}
+            </optgroup>
+            <optgroup label="Cartesia">
+              {STT_OPTIONS.filter((m) => m.provider === 'cartesia').map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.name}
+                </option>
+              ))}
+            </optgroup>
           </select>
         </div>
 
@@ -153,11 +202,28 @@ export function AgentForm({ agent, userId, onSubmit, onCancel }: AgentFormProps)
               setFormData({ ...formData, ttsModel: e.target.value as CreateAgentConfigRequest['ttsModel'] })
             }
           >
-            {TTS_OPTIONS.map((model) => (
-              <option key={model.id} value={model.id}>
-                {model.name}
-              </option>
-            ))}
+            {/* Group by provider */}
+            <optgroup label="OpenAI">
+              {TTS_OPTIONS.filter((m) => m.provider === 'openai').map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.name}
+                </option>
+              ))}
+            </optgroup>
+            <optgroup label="ElevenLabs">
+              {TTS_OPTIONS.filter((m) => m.provider === 'elevenlabs').map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.name}
+                </option>
+              ))}
+            </optgroup>
+            <optgroup label="Cartesia">
+              {TTS_OPTIONS.filter((m) => m.provider === 'cartesia').map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.name}
+                </option>
+              ))}
+            </optgroup>
           </select>
         </div>
 

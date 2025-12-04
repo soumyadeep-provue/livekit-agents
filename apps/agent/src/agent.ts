@@ -570,6 +570,27 @@ export default defineAgent({
           instructions: 'Speak in a natural, conversational tone.',
         });
       }
+    } else if (config.ttsModel.startsWith('cartesia/')) {
+      // Cartesia TTS support
+      // Format: cartesia/sonic-3:voice-id or just cartesia/sonic-3
+      const parts = config.ttsModel.split(':');
+      const modelPart = parts[0]; // e.g., "cartesia/sonic-3"
+      let voiceId = parts[1] || config.voice;
+
+      // Check if voice is a valid Cartesia UUID format
+      // Cartesia voices are UUIDs (e.g., "a167e0f3-df7e-4d52-a9c3-f949145efdab")
+      // If it's not a UUID, use default Cartesia voice
+      const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(voiceId);
+      if (!isUUID) {
+        // Default to Katie (a stable, natural female voice)
+        voiceId = 'f786b574-daa5-4673-aa0c-cbe3e8534c02';
+        console.log(`[Agent] Voice "${config.voice}" is not a valid Cartesia voice ID, using default: Katie`);
+      }
+
+      console.log(`[Agent] Using Cartesia TTS: ${modelPart} with voice: ${voiceId}`);
+
+      // Use the simple string format that LiveKit Inference supports
+      ttsProvider = `${modelPart}:${voiceId}`;
     } else {
       // Default to OpenAI if provider not recognized
       console.warn(`[Agent] TTS model ${config.ttsModel} not supported, using OpenAI gpt-4o-mini-tts`);
@@ -602,6 +623,11 @@ export default defineAgent({
         });
         sttProvider = new stt.StreamAdapter(openaiSTT, vad);
       }
+    } else if (config.sttModel.startsWith('cartesia/')) {
+      // Cartesia Ink-Whisper via LiveKit Inference
+      // Use string format with language code: "cartesia/ink-whisper:en"
+      console.log(`[Agent] Using Cartesia STT: ${config.sttModel}`);
+      sttProvider = `${config.sttModel}:en`;
     } else {
       // Default to gpt-4o-transcribe if other provider selected (not yet supported)
       console.warn(`[Agent] STT model ${config.sttModel} not supported, using OpenAI gpt-4o-transcribe`);

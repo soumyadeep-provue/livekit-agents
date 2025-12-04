@@ -10,5 +10,6 @@ export default defineConfig({
                 changeOrigin: true,
             },
         },
+        allowedHosts: ['catherine-most-super-prizes.trycloudflare.com'],
     },
 });

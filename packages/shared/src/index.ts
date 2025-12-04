@@ -10,8 +10,8 @@ export const AgentConfigSchema = z.object({
   voiceInstructions: z.string().optional(), // Instructions for TTS tone/style (gpt-4o-mini-tts only)
   greeting: z.string().optional(),
   model: z.enum(['gpt-4.1-mini', 'gpt-4.1', 'gpt-4o']).default('gpt-4.1-mini'),
-  sttModel: z.enum(['openai/gpt-4o-transcribe', 'openai/whisper-1', 'deepgram/nova-3', 'assemblyai/universal-streaming']).default('openai/gpt-4o-transcribe'),
-  ttsModel: z.enum(['openai/gpt-4o-mini-tts', 'openai/tts-1', 'openai/tts-1-hd', 'elevenlabs/eleven_turbo_v2_5', 'elevenlabs/eleven_multilingual_v2', 'cartesia/sonic-3']).default('openai/gpt-4o-mini-tts'),
+  sttModel: z.enum(['openai/gpt-4o-transcribe', 'openai/whisper-1', 'deepgram/nova-3', 'assemblyai/universal-streaming', 'cartesia/ink-whisper']).default('openai/gpt-4o-transcribe'),
+  ttsModel: z.enum(['openai/gpt-4o-mini-tts', 'openai/tts-1', 'openai/tts-1-hd', 'elevenlabs/eleven_turbo_v2_5', 'elevenlabs/eleven_multilingual_v2', 'cartesia/sonic-3', 'cartesia/sonic-2', 'cartesia/sonic-turbo', 'cartesia/sonic']).default('openai/gpt-4o-mini-tts'),
   tools: z.array(z.string()).default([]),
   // Sharing settings
   isPublic: z.boolean().default(false),
@@ -164,36 +164,86 @@ export function generateShareCode(): string {
   return code;
 }
 
+// Helper to get compatible voices for a TTS model
+export function getCompatibleVoices(ttsModelId: string) {
+  // Extract provider from TTS model ID (e.g., "openai/gpt-4o-mini-tts" -> "openai")
+  const provider = ttsModelId.split('/')[0] as 'openai' | 'elevenlabs' | 'cartesia';
+
+  // Filter voices by provider
+  let compatibleVoices = [...VOICE_OPTIONS].filter((voice) => voice.provider === provider);
+
+  // For OpenAI, further filter by model compatibility
+  if (provider === 'openai') {
+    const modelName = ttsModelId.split('/')[1];
+    if (modelName === 'gpt-4o-mini-tts') {
+      // Only show gpt-4o-mini-tts compatible voices
+      compatibleVoices = compatibleVoices.filter((voice) => 'model' in voice && voice.model === 'gpt-4o-mini-tts');
+    } else if (modelName === 'tts-1' || modelName === 'tts-1-hd') {
+      // Only show legacy compatible voices
+      compatibleVoices = compatibleVoices.filter((voice) => 'model' in voice && voice.model === 'legacy');
+    }
+  }
+
+  return compatibleVoices;
+}
+
+// Helper to group voices by category
+export function groupVoicesByCategory(voices: ReturnType<typeof getCompatibleVoices>) {
+  const grouped = new Map<string, any[]>();
+
+  for (const voice of voices) {
+    const category = ('category' in voice ? (voice as any).category : (voice as any).provider) as string;
+    if (!grouped.has(category)) {
+      grouped.set(category, []);
+    }
+    grouped.get(category)!.push(voice);
+  }
+
+  return grouped;
+}
+
 // Available voice options
 export const VOICE_OPTIONS = [
-  // OpenAI voices for tts-1 and tts-1-hd (legacy models)
-  { id: 'alloy', name: 'Alloy (OpenAI Legacy)', provider: 'openai', language: 'en-US', model: 'legacy' },
-  { id: 'echo', name: 'Echo (OpenAI Legacy)', provider: 'openai', language: 'en-US', model: 'legacy' },
-  { id: 'fable', name: 'Fable (OpenAI Legacy)', provider: 'openai', language: 'en-US', model: 'legacy' },
-  { id: 'onyx', name: 'Onyx (OpenAI Legacy)', provider: 'openai', language: 'en-US', model: 'legacy' },
-  { id: 'nova', name: 'Nova (OpenAI Legacy)', provider: 'openai', language: 'en-US', model: 'legacy' },
-  { id: 'shimmer', name: 'Shimmer (OpenAI Legacy)', provider: 'openai', language: 'en-US', model: 'legacy' },
   // OpenAI voices for gpt-4o-mini-tts (latest model)
-  { id: 'ash', name: 'Ash (OpenAI)', provider: 'openai', language: 'en-US', model: 'gpt-4o-mini-tts' },
-  { id: 'ballad', name: 'Ballad (OpenAI)', provider: 'openai', language: 'en-US', model: 'gpt-4o-mini-tts' },
-  { id: 'coral', name: 'Coral (OpenAI)', provider: 'openai', language: 'en-US', model: 'gpt-4o-mini-tts' },
-  { id: 'sage', name: 'Sage (OpenAI)', provider: 'openai', language: 'en-US', model: 'gpt-4o-mini-tts' },
-  { id: 'verse', name: 'Verse (OpenAI)', provider: 'openai', language: 'en-US', model: 'gpt-4o-mini-tts' },
+  { id: 'ash', name: 'Ash', provider: 'openai', language: 'en-US', model: 'gpt-4o-mini-tts', category: 'OpenAI' },
+  { id: 'ballad', name: 'Ballad', provider: 'openai', language: 'en-US', model: 'gpt-4o-mini-tts', category: 'OpenAI' },
+  { id: 'coral', name: 'Coral', provider: 'openai', language: 'en-US', model: 'gpt-4o-mini-tts', category: 'OpenAI' },
+  { id: 'sage', name: 'Sage', provider: 'openai', language: 'en-US', model: 'gpt-4o-mini-tts', category: 'OpenAI' },
+  { id: 'verse', name: 'Verse', provider: 'openai', language: 'en-US', model: 'gpt-4o-mini-tts', category: 'OpenAI' },
+  // OpenAI voices for tts-1 and tts-1-hd (legacy models)
+  { id: 'alloy', name: 'Alloy', provider: 'openai', language: 'en-US', model: 'legacy', category: 'OpenAI Legacy' },
+  { id: 'echo', name: 'Echo', provider: 'openai', language: 'en-US', model: 'legacy', category: 'OpenAI Legacy' },
+  { id: 'fable', name: 'Fable', provider: 'openai', language: 'en-US', model: 'legacy', category: 'OpenAI Legacy' },
+  { id: 'onyx', name: 'Onyx', provider: 'openai', language: 'en-US', model: 'legacy', category: 'OpenAI Legacy' },
+  { id: 'nova', name: 'Nova', provider: 'openai', language: 'en-US', model: 'legacy', category: 'OpenAI Legacy' },
+  { id: 'shimmer', name: 'Shimmer', provider: 'openai', language: 'en-US', model: 'legacy', category: 'OpenAI Legacy' },
   // ElevenLabs English voices
-  { id: 'cgSgspJ2msm6clMCkdW9', name: 'Jessica (ElevenLabs)', provider: 'elevenlabs', language: 'en-US' },
-  { id: 'EXAVITQu4vr4xnSDxMaL', name: 'Bella (ElevenLabs)', provider: 'elevenlabs', language: 'en-US' },
-  { id: '21m00Tcm4TlvDq8ikWAM', name: 'Rachel (ElevenLabs)', provider: 'elevenlabs', language: 'en-US' },
-  { id: 'ErXwobaYiN019PkySvjV', name: 'Antoni (ElevenLabs)', provider: 'elevenlabs', language: 'en-US' },
-  { id: 'VR6AewLTigWG4xSOukaG', name: 'Arnold (ElevenLabs)', provider: 'elevenlabs', language: 'en-US' },
-  { id: 'pNInz6obpgDQGcFmaJgB', name: 'Adam (ElevenLabs)', provider: 'elevenlabs', language: 'en-US' },
+  { id: 'cgSgspJ2msm6clMCkdW9', name: 'Jessica', provider: 'elevenlabs', language: 'en-US', category: 'ElevenLabs' },
+  { id: 'EXAVITQu4vr4xnSDxMaL', name: 'Bella', provider: 'elevenlabs', language: 'en-US', category: 'ElevenLabs' },
+  { id: '21m00Tcm4TlvDq8ikWAM', name: 'Rachel', provider: 'elevenlabs', language: 'en-US', category: 'ElevenLabs' },
+  { id: 'ErXwobaYiN019PkySvjV', name: 'Antoni', provider: 'elevenlabs', language: 'en-US', category: 'ElevenLabs' },
+  { id: 'VR6AewLTigWG4xSOukaG', name: 'Arnold', provider: 'elevenlabs', language: 'en-US', category: 'ElevenLabs' },
+  { id: 'pNInz6obpgDQGcFmaJgB', name: 'Adam', provider: 'elevenlabs', language: 'en-US', category: 'ElevenLabs' },
   // ElevenLabs Indian English voices
-  { id: 'nPczCjzI2devNBz1zQrb', name: 'Brian (ElevenLabs)', provider: 'elevenlabs', language: 'en-IN' },
-  { id: 'cjVigY5qzO86Huf0OWal', name: 'Eric (ElevenLabs)', provider: 'elevenlabs', language: 'en-IN' },
+  { id: 'nPczCjzI2devNBz1zQrb', name: 'Brian', provider: 'elevenlabs', language: 'en-IN', category: 'ElevenLabs' },
+  { id: 'cjVigY5qzO86Huf0OWal', name: 'Eric', provider: 'elevenlabs', language: 'en-IN', category: 'ElevenLabs' },
   // ElevenLabs Hindi voices (use with eleven_multilingual_v2)
-  { id: 'onwK4e9ZLuTAKqWW03F9', name: 'Daniel (ElevenLabs)', provider: 'elevenlabs', language: 'hi-IN' },
-  { id: 'XB0fDUnXU5powFXDhCwa', name: 'Charlotte (ElevenLabs)', provider: 'elevenlabs', language: 'hi-IN' },
-  { id: 'Xb7hH8MSUJpSbSDYk0k2', name: 'Alice (ElevenLabs)', provider: 'elevenlabs', language: 'en-GB' },
-  { id: 'iP95p4xoKVk53GoZ742B', name: 'Chris (ElevenLabs)', provider: 'elevenlabs', language: 'en-US' },
+  { id: 'onwK4e9ZLuTAKqWW03F9', name: 'Daniel', provider: 'elevenlabs', language: 'hi-IN', category: 'ElevenLabs' },
+  { id: 'XB0fDUnXU5powFXDhCwa', name: 'Charlotte', provider: 'elevenlabs', language: 'hi-IN', category: 'ElevenLabs' },
+  { id: 'Xb7hH8MSUJpSbSDYk0k2', name: 'Alice', provider: 'elevenlabs', language: 'en-GB', category: 'ElevenLabs' },
+  { id: 'iP95p4xoKVk53GoZ742B', name: 'Chris', provider: 'elevenlabs', language: 'en-US', category: 'ElevenLabs' },
+  // Cartesia voices
+  { id: 'a167e0f3-df7e-4d52-a9c3-f949145efdab', name: 'Customer Support Man', provider: 'cartesia', language: 'en-US', category: 'Cartesia' },
+  { id: 'f786b574-daa5-4673-aa0c-cbe3e8534c02', name: 'Katie', provider: 'cartesia', language: 'en-US', category: 'Cartesia' },
+  { id: '228fca29-3a0a-435c-8728-5cb483251068', name: 'Kiefer', provider: 'cartesia', language: 'en-US', category: 'Cartesia' },
+  { id: '694f9389-aac1-45b6-b726-9d9369183238', name: 'Sarah', provider: 'cartesia', language: 'en-US', category: 'Cartesia' },
+  { id: '00a77add-48d5-4ef6-8157-71e5437b282d', name: 'Calm Lady', provider: 'cartesia', language: 'en-US', category: 'Cartesia' },
+  { id: '156fb8d2-335b-4950-9cb3-a2d33befec77', name: 'Helpful Woman', provider: 'cartesia', language: 'en-US', category: 'Cartesia' },
+  { id: 'b7d50908-b17c-442d-ad8d-810c63997ed9', name: 'California Girl', provider: 'cartesia', language: 'en-US', category: 'Cartesia' },
+  { id: '4f8651b0-bbbd-46ac-8b37-5168c5923303', name: 'Kentucky Woman', provider: 'cartesia', language: 'en-US', category: 'Cartesia' },
+  { id: '79a125e8-cd45-4c13-8a67-188112f4dd22', name: 'British Lady', provider: 'cartesia', language: 'en-GB', category: 'Cartesia' },
+  { id: 'd46abd1d-2d02-43e8-819f-51fb652c1c61', name: 'Newsman', provider: 'cartesia', language: 'en-US', category: 'Cartesia' },
+  { id: '69267136-1bdc-412f-ad78-0caad210fb40', name: 'Friendly Reading Man', provider: 'cartesia', language: 'en-US', category: 'Cartesia' },
 ] as const;
 
 // Available model options
@@ -204,19 +254,23 @@ export const LLM_OPTIONS = [
 ] as const;
 
 export const STT_OPTIONS = [
-  { id: 'openai/gpt-4o-transcribe', name: 'OpenAI GPT-4o Transcribe (Streaming)', provider: 'openai' },
-  { id: 'openai/whisper-1', name: 'OpenAI Whisper', provider: 'openai' },
-  { id: 'deepgram/nova-3', name: 'Deepgram Nova 3', provider: 'deepgram' },
-  { id: 'assemblyai/universal-streaming', name: 'AssemblyAI Universal', provider: 'assemblyai' },
+  { id: 'openai/gpt-4o-transcribe', name: 'GPT-4o Transcribe - Streaming', provider: 'openai' },
+  { id: 'openai/whisper-1', name: 'Whisper-1', provider: 'openai' },
+  { id: 'deepgram/nova-3', name: 'Nova 3', provider: 'deepgram' },
+  { id: 'assemblyai/universal-streaming', name: 'Universal - Streaming', provider: 'assemblyai' },
+  { id: 'cartesia/ink-whisper', name: 'Ink-Whisper - 99 Languages', provider: 'cartesia', languages: ['en', 'zh', 'de', 'es', 'ru', 'ko', 'fr', 'ja', 'pt', 'tr', 'pl', 'ca', 'nl', 'ar', 'sv', 'it', 'id', 'hi', 'fi', 'vi', 'he', 'uk', 'el', 'ms', 'cs', 'ro', 'da', 'hu', 'ta', 'no', 'th', 'ur', 'hr', 'bg', 'lt', 'la', 'mi', 'ml', 'cy', 'sk', 'te', 'fa', 'lv', 'bn', 'sr', 'az', 'sl', 'kn', 'et', 'mk', 'br', 'eu', 'is', 'hy', 'ne', 'mn', 'bs', 'kk', 'sq', 'sw', 'gl', 'mr', 'pa', 'si', 'km', 'sn', 'yo', 'so', 'af', 'oc', 'ka', 'be', 'tg', 'sd', 'gu', 'am', 'yi', 'lo', 'uz', 'fo', 'ht', 'ps', 'tk', 'mt', 'sa', 'lb', 'my', 'bo', 'tl', 'mg', 'as', 'tt', 'haw', 'ln', 'ha', 'ba'] },
 ] as const;
 
 export const TTS_OPTIONS = [
-  { id: 'openai/gpt-4o-mini-tts', name: 'OpenAI GPT-4o Mini TTS (Latest)', provider: 'openai', languages: ['en', 'es', 'fr', 'de', 'it', 'pt', 'nl', 'pl', 'ru', 'ar', 'zh', 'ja', 'hi', 'ko'] },
-  { id: 'openai/tts-1', name: 'OpenAI TTS-1 (Standard)', provider: 'openai', languages: ['en', 'es', 'fr', 'de', 'it', 'pt', 'nl', 'pl', 'ru', 'ar', 'zh', 'ja', 'hi', 'ko'] },
-  { id: 'openai/tts-1-hd', name: 'OpenAI TTS-1 HD (Higher Quality)', provider: 'openai', languages: ['en', 'es', 'fr', 'de', 'it', 'pt', 'nl', 'pl', 'ru', 'ar', 'zh', 'ja', 'hi', 'ko'] },
-  { id: 'elevenlabs/eleven_turbo_v2_5', name: 'ElevenLabs Turbo v2.5', provider: 'elevenlabs', languages: ['en'] },
-  { id: 'elevenlabs/eleven_multilingual_v2', name: 'ElevenLabs Multilingual v2', provider: 'elevenlabs', languages: ['en', 'hi', 'ta', 'de', 'fr', 'es', 'ja', 'zh', 'ko', 'pt', 'it', 'ar', 'ru'] },
-  { id: 'cartesia/sonic-3', name: 'Cartesia Sonic 3', provider: 'cartesia', languages: ['en'] },
+  { id: 'openai/gpt-4o-mini-tts', name: 'GPT-4o Mini TTS - Latest', provider: 'openai', languages: ['en', 'es', 'fr', 'de', 'it', 'pt', 'nl', 'pl', 'ru', 'ar', 'zh', 'ja', 'hi', 'ko'] },
+  { id: 'openai/tts-1', name: 'TTS-1 Standard', provider: 'openai', languages: ['en', 'es', 'fr', 'de', 'it', 'pt', 'nl', 'pl', 'ru', 'ar', 'zh', 'ja', 'hi', 'ko'] },
+  { id: 'openai/tts-1-hd', name: 'TTS-1 HD - Higher Quality', provider: 'openai', languages: ['en', 'es', 'fr', 'de', 'it', 'pt', 'nl', 'pl', 'ru', 'ar', 'zh', 'ja', 'hi', 'ko'] },
+  { id: 'elevenlabs/eleven_turbo_v2_5', name: 'Turbo v2.5', provider: 'elevenlabs', languages: ['en'] },
+  { id: 'elevenlabs/eleven_multilingual_v2', name: 'Multilingual v2', provider: 'elevenlabs', languages: ['en', 'hi', 'ta', 'de', 'fr', 'es', 'ja', 'zh', 'ko', 'pt', 'it', 'ar', 'ru'] },
+  { id: 'cartesia/sonic-3', name: 'Sonic 3 - 43 Languages', provider: 'cartesia', languages: ['en', 'de', 'es', 'fr', 'ja', 'pt', 'zh', 'hi', 'ko', 'it', 'nl', 'pl', 'ru', 'sv', 'tr', 'tl', 'bg', 'ro', 'ar', 'cs', 'el', 'fi', 'hr', 'ms', 'sk', 'da', 'ta', 'uk', 'hu', 'no', 'vi', 'bn', 'th', 'he', 'ka', 'id', 'te', 'gu', 'kn', 'ml', 'mr', 'pa'] },
+  { id: 'cartesia/sonic-2', name: 'Sonic 2', provider: 'cartesia', languages: ['en', 'fr', 'de', 'es', 'pt', 'zh', 'ja', 'hi', 'it', 'ko', 'nl', 'pl', 'ru', 'sv', 'tr'] },
+  { id: 'cartesia/sonic-turbo', name: 'Sonic Turbo - Fast', provider: 'cartesia', languages: ['en', 'fr', 'de', 'es', 'pt', 'zh', 'ja', 'hi', 'it', 'ko', 'nl', 'pl', 'ru', 'sv', 'tr'] },
+  { id: 'cartesia/sonic', name: 'Sonic - Original', provider: 'cartesia', languages: ['en', 'fr', 'de', 'es', 'pt', 'zh', 'ja', 'hi', 'it', 'ko', 'nl', 'pl', 'ru', 'sv', 'tr'] },
 ] as const;
 
 // ============ Tools Configuration ============
